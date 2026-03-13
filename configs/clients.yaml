@@ -1,0 +1,276 @@
+# Curated defaults as of 2026-03-13.
+# Edit this file freely as client requirements change.
+
+targets:
+  - id: codex-cli
+    name: Codex CLI
+    category: coding_agent
+    docs_url: "https://developers.openai.com/codex/config-reference/"
+    notes:
+      - "Custom providers in Codex use the Responses API."
+    modes:
+      - name: responses
+        api: responses
+        verified_on: "2026-03-13"
+        source: "official_docs"
+        confidence: "high"
+        required_tests:
+          - responses.basic
+          - responses.stream
+          - responses.tool_call.required
+        optional_tests:
+          - responses.structured.json_schema
+          - responses.error_shape
+        unsupported_ok:
+          - responses.memory.prev_id
+          - responses.store_get
+          - responses.conversations
+
+  - id: qwen-code
+    name: Qwen Code
+    category: coding_agent
+    docs_url: "https://qwenlm.github.io/qwen-code-docs/en/users/configuration/model-providers/"
+    modes:
+      - name: openai-compatible
+        api: chat
+        verified_on: "2026-03-13"
+        source: "repo_docs"
+        confidence: "medium"
+        required_tests:
+          - chat.basic
+          - chat.stream
+          - chat.tool_call.required
+        optional_tests:
+          - chat.memory
+          - chat.structured.json_schema
+        unsupported_ok:
+          - chat.tool_call
+          - chat.structured.json_object
+
+  - id: opencode
+    name: OpenCode
+    category: coding_agent
+    docs_url: "https://opencode.ai/docs/providers/"
+    modes:
+      - name: openai-compatible
+        api: chat
+        verified_on: "2026-03-13"
+        source: "repo_docs"
+        confidence: "medium"
+        required_tests:
+          - chat.basic
+          - chat.stream
+          - chat.tool_call.required
+        optional_tests:
+          - chat.memory
+          - chat.structured.json_schema
+        unsupported_ok:
+          - chat.tool_call
+          - chat.structured.json_object
+      - name: openai-responses
+        api: responses
+        verified_on: "2026-03-13"
+        source: "repo_docs"
+        confidence: "medium"
+        required_tests:
+          - responses.basic
+          - responses.stream
+          - responses.tool_call.required
+        optional_tests:
+          - responses.structured.json_schema
+        unsupported_ok:
+          - responses.memory.prev_id
+          - responses.store_get
+          - responses.conversations
+          - responses.tool_call
+        notes:
+          - "Use this mode when the provider exposes /v1/responses."
+
+  - id: aider
+    name: Aider
+    category: coding_agent
+    docs_url: "https://aider.chat/docs/llms/other.html"
+    notes:
+      - "Aider supports many OpenAI-compatible APIs; tool calling is helpful but not always mandatory."
+    modes:
+      - name: openai-compatible
+        api: chat
+        verified_on: "2026-03-13"
+        source: "repo_docs"
+        confidence: "medium"
+        required_tests:
+          - chat.basic
+          - chat.stream
+        optional_tests:
+          - chat.tool_call.required
+          - chat.memory
+          - chat.structured.json_schema
+        unsupported_ok:
+          - chat.tool_call
+          - chat.structured.json_object
+
+  - id: cline
+    name: Cline
+    category: coding_agent
+    docs_url: "https://docs.cline.bot/provider-config/openai-compatible"
+    modes:
+      - name: openai-compatible
+        api: chat
+        verified_on: "2026-03-13"
+        source: "repo_docs"
+        confidence: "medium"
+        required_tests:
+          - chat.basic
+          - chat.stream
+          - chat.tool_call.required
+        optional_tests:
+          - chat.memory
+          - chat.structured.json_schema
+        unsupported_ok:
+          - chat.tool_call
+          - chat.structured.json_object
+
+  - id: goose
+    name: Goose
+    category: coding_agent
+    docs_url: "https://block.github.io/goose/docs/getting-started/providers/"
+    notes:
+      - "Goose agents rely on tool use for full capability."
+    modes:
+      - name: openai-compatible
+        api: chat
+        verified_on: "2026-03-13"
+        source: "repo_docs"
+        confidence: "medium"
+        required_tests:
+          - chat.basic
+          - chat.stream
+          - chat.tool_call.required
+        optional_tests:
+          - chat.memory
+          - chat.structured.json_schema
+        unsupported_ok:
+          - chat.tool_call
+          - chat.structured.json_object
+
+  - id: openfang
+    name: OpenFang
+    category: assistant_framework
+    docs_url: "https://github.com/RightNow-AI/openfang"
+    notes:
+      - "Curated as an OpenAI-compatible external-agent target with MCP/tool support."
+    modes:
+      - name: openai-compatible
+        api: chat
+        verified_on: "2026-03-13"
+        source: "curated"
+        confidence: "medium"
+        required_tests:
+          - chat.basic
+          - chat.stream
+          - chat.tool_call.required
+        optional_tests:
+          - chat.memory
+          - chat.structured.json_schema
+        unsupported_ok:
+          - chat.tool_call
+          - chat.structured.json_object
+
+  - id: openclaw
+    name: OpenClaw
+    category: assistant_framework
+    docs_url: "https://docs.openclaw.ai/openai-compatible-provider/openai-completions"
+    modes:
+      - name: openai-completions
+        api: chat
+        verified_on: "2026-03-13"
+        source: "repo_docs"
+        confidence: "medium"
+        required_tests:
+          - chat.basic
+          - chat.stream
+          - chat.tool_call.required
+        optional_tests:
+          - chat.memory
+          - chat.structured.json_schema
+        unsupported_ok:
+          - chat.tool_call
+          - chat.structured.json_object
+      - name: openai-responses
+        api: responses
+        verified_on: "2026-03-13"
+        source: "repo_docs"
+        confidence: "medium"
+        required_tests:
+          - responses.basic
+          - responses.stream
+          - responses.tool_call.required
+        optional_tests:
+          - responses.structured.json_schema
+        unsupported_ok:
+          - responses.memory.prev_id
+          - responses.store_get
+          - responses.conversations
+          - responses.tool_call
+
+  - id: zeroclaw
+    name: ZeroClaw
+    category: assistant_framework
+    docs_url: "https://zeroclaw.bot/"
+    notes:
+      - "Curated as an OpenAI-compatible assistant target; adjust modes if your deployment expects a different API surface."
+    modes:
+      - name: openai-compatible
+        api: chat
+        verified_on: "2026-03-13"
+        source: "curated"
+        confidence: "low"
+        required_tests:
+          - chat.basic
+          - chat.stream
+          - chat.tool_call.required
+        optional_tests:
+          - chat.memory
+          - chat.structured.json_schema
+        unsupported_ok:
+          - chat.tool_call
+          - chat.structured.json_object
+
+  - id: librechat
+    name: LibreChat Agents
+    category: assistant_framework
+    docs_url: "https://www.librechat.ai/docs/configuration/librechat_yaml/object_structure/custom_endpoints"
+    modes:
+      - name: custom-endpoint
+        api: chat
+        verified_on: "2026-03-13"
+        source: "repo_docs"
+        confidence: "medium"
+        required_tests:
+          - chat.basic
+          - chat.stream
+          - chat.tool_call.required
+        optional_tests:
+          - chat.memory
+          - chat.structured.json_schema
+        unsupported_ok:
+          - chat.tool_call
+          - chat.structured.json_object
+      - name: agents-api
+        api: responses
+        verified_on: "2026-03-13"
+        source: "repo_docs"
+        confidence: "medium"
+        required_tests:
+          - responses.basic
+          - responses.stream
+          - responses.tool_call.required
+        optional_tests:
+          - responses.structured.json_schema
+        unsupported_ok:
+          - responses.memory.prev_id
+          - responses.store_get
+          - responses.conversations
+          - responses.tool_call
+        notes:
+          - "Agents endpoint support is evolving; verify against the current LibreChat release."

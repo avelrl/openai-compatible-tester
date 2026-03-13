@@ -1,0 +1,114 @@
+passes: 1
+warmup_passes: 1
+parallelism: 1
+timeout_seconds: 600
+litellm_headers: {}
+retry:
+  max_attempts: 3
+  backoff_ms: 250
+  retry_on_status: [429, 500, 502, 503, 504]
+  test_retries: 0
+report:
+  snippet_limit_bytes: 4096
+stream:
+  enabled: true
+tool_calling:
+  enabled: true
+structured_outputs:
+  enabled: true
+conversations:
+  enabled: true
+memory:
+  enabled: true
+chat_reasoning:
+  enabled: false
+tests:
+  responses.tool_call:
+    timeout_seconds: 180
+    stream: false
+    stream_timeout_seconds: 30
+    litellm_headers:
+      x-litellm-timeout: 180
+    tool_choice_mode: forced # forced|required|auto
+    forced_tool_name: add
+    parallel_tool_calls: false
+    reasoning_effort: minimal # minimal|low|medium|high|omit
+    strict_mode: false
+  chat.tool_call:
+    timeout_seconds: 180
+    litellm_headers:
+      x-litellm-timeout: 180
+    tool_choice_mode: forced # forced|required|auto
+    forced_tool_name: add
+    parallel_tool_calls: false
+    max_tokens: 64
+    strict_mode: false
+analysis:
+  enabled: true
+  compute_percentiles: true
+  percentiles: [50, 90, 95, 99]
+  flakiness: true
+  fail_on_flaky: false
+codex_review:
+  enabled: false
+  codex_bin: "codex"
+  model: "gpt-5.4"
+  reasoning_effort: "xhigh"
+  sandbox: "read-only"
+  approvals: "never"
+  prompt_template: |
+    You are a strict QA auditor for OpenAI-compatible APIs.
+
+    Goal:
+    - Explain what is compatible and what is broken, with evidence from the reports.
+    - Provide concrete fixes (config and/or code and/or provider settings) to resolve the current failures.
+    - Compare model profiles and recommend where each model can be safely used (tools, JSON, streaming, etc.).
+
+    Inputs:
+    - The current run report paths are appended below.
+    - If needed, also read the active model and endpoint configs for profile mapping.
+
+    Output requirements (Markdown):
+    1) Executive Summary (10 lines max)
+       - Overall compatibility verdict
+       - Top 3 current blockers (highest impact)
+       - Best "safe default" model profile (if any)
+
+    2) Model Comparison (table + recommendations)
+       - For each profile/model: PASS/FAIL/UNSUPPORTED/TIMEOUT counts
+       - Feature support checklist per profile:
+         Responses basic, Responses stream, Responses structured, Responses tool_call, Responses store+GET,
+         Chat basic, Chat stream, Chat structured, Chat tool_call, Memory, Conversations
+       - Latency summary per profile (avg + p95 if available)
+       - Recommendations:
+         - Best for tool calling / agent flows
+         - Best for structured JSON output
+         - Best for streaming UI
+         - Best "cheap/simple" fallback (if applicable)
+       - For each recommendation, include short rationale tied to specific tests and reliability.
+
+    3) Top Incompatibilities (grouped by root cause)
+       For each group:
+       - Symptoms: list test_ids and the most important error messages (short excerpts)
+       - Evidence: reference the exact request/response from full_log.jsonl (do not paste huge logs; quote only the relevant fields)
+       - Root cause hypothesis (proxy/backend/provider vs client payload)
+       - Fix (actionable):
+         - exact config changes (suite.yaml overrides, headers like x-litellm-timeout/stream-timeout)
+         - API payload changes (e.g., remove/rename unsupported fields) if relevant
+         - provider/router config suggestions if relevant
+       - Risk: what could regress if we apply the fix
+
+    4) Flakiness + Reliability Plan
+       - Identify flaky tests (pass rate < 1.0) and likely reasons
+       - How to stabilize (timeouts, retries, streaming timeouts, tool_choice mode, model choice)
+
+    5) Action Plan (prioritized)
+       - P0: fixes to make core endpoints usable
+       - P1: fixes to enable tools/structured outputs/streaming
+       - P2: nice-to-have compatibility improvements
+       Each item should be concrete and verifiable (what to change, what test should turn PASS).
+
+    Rules:
+    - Treat clear "unknown parameter/field" type errors on optional features as UNSUPPORTED, not FAIL, and recommend how to feature-gate.
+    - Do not invent data; only use the provided reports.
+    - Prefer short, high-signal excerpts over long logs.

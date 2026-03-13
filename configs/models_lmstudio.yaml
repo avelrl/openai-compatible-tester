@@ -1,0 +1,8 @@
+profiles:
+  - name: "qwen2.5-coder"
+    chat_model: "qwen2.5-coder-7b-instruct-mlx"
+    responses_model: "qwen2.5-coder-7b-instruct-mlx"
+    reasoning_effort: "high"
+    temperature: 0
+    extra: {}
+

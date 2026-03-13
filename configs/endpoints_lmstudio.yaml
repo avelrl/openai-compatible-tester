@@ -1,0 +1,9 @@
+base_url: "http://127.0.0.1:1234/v1"
+api_key_env: "OPENAI_API_KEY"
+default_headers:
+  User-Agent: "openai-compatible-tester/1.0"
+paths:
+  models: "/v1/models"
+  chat: "/v1/chat/completions"
+  responses: "/v1/responses"
+  conversations: "/v1/conversations"

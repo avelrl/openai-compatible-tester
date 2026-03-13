@@ -1,0 +1,8 @@
+profiles:
+  # Replace these placeholders with real model IDs for your target provider.
+  - name: "default"
+    chat_model: "your-chat-model"
+    responses_model: "your-responses-model"
+    reasoning_effort: "low"
+    temperature: 0
+    extra: {}

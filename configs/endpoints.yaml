@@ -1,0 +1,10 @@
+# Prefer base_url without /v1; a trailing /v1 is stripped automatically.
+base_url: "https://your-openai-compatible.example.com"
+api_key_env: "OPENAI_API_KEY"
+default_headers:
+  User-Agent: "openai-compatible-tester/1.0"
+paths:
+  models: "/v1/models"
+  chat: "/v1/chat/completions"
+  responses: "/v1/responses"
+  conversations: "/v1/conversations"

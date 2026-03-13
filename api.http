@@ -1,0 +1,48 @@
+@BASE_URL = {{$dotenv BASE_URL}}
+@OPENAI_API_KEY = {{$dotenv OPENAI_API_KEY}}
+@MODEL_CHAT = {{$dotenv MODEL_CHAT}}
+@MODEL_RESP = {{$dotenv MODEL_RESP}}
+
+###
+# Canonical curl examples live in details.md.
+# This file is a safe local scratch template for REST clients.
+# Expect BASE_URL without /v1, for example: https://your-openai-compatible.example.com
+
+###
+GET {{BASE_URL}}/v1/models
+Authorization: Bearer {{OPENAI_API_KEY}}
+Content-Type: application/json
+
+###
+POST {{BASE_URL}}/v1/responses
+Authorization: Bearer {{OPENAI_API_KEY}}
+Content-Type: application/json
+
+{
+  "model": "{{MODEL_RESP}}",
+  "input": "ping: answer with OK"
+}
+
+###
+POST {{BASE_URL}}/v1/chat/completions
+Authorization: Bearer {{OPENAI_API_KEY}}
+Content-Type: application/json
+
+{
+  "model": "{{MODEL_CHAT}}",
+  "messages": [
+    {"role": "developer", "content": "Reply with exactly OK"},
+    {"role": "user", "content": "ping"}
+  ]
+}
+
+###
+POST {{BASE_URL}}/v1/responses
+Authorization: Bearer {{OPENAI_API_KEY}}
+Content-Type: application/json
+
+{
+  "model": "{{MODEL_RESP}}",
+  "stream": true,
+  "input": "Stream test: print HELLO one char at a time"
+}

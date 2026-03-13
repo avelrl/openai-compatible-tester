@@ -1,0 +1,8 @@
+/reports/
+.gocache/
+.gomodcache/
+.env
+.env.*
+!.env.example
+models_private.yaml
+endpoints_private.yaml
