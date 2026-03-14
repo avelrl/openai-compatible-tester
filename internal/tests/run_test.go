@@ -126,3 +126,26 @@ func TestRunnerRetriesTimeoutThenPass(t *testing.T) {
 		t.Fatalf("expected Attempts=2, got %d", results[0].Attempts)
 	}
 }
+
+func TestRunnerFilterTestsSkipsExplicitlyDisabledTests(t *testing.T) {
+	disabled := false
+	runner := NewRunner(config.Config{
+		Suite: config.SuiteConfig{
+			Stream: config.Toggle{Enabled: true},
+			Tests: map[string]config.TestOverride{
+				"responses.store_get": {Enabled: &disabled},
+			},
+		},
+	}, nil, []TestCase{
+		{ID: "responses.store_get", Name: "Responses store + GET"},
+		{ID: "chat.basic", Name: "Chat basic"},
+	})
+
+	filtered := runner.filterTests()
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 test after filtering, got %d", len(filtered))
+	}
+	if filtered[0].ID != "chat.basic" {
+		t.Fatalf("expected chat.basic to remain, got %s", filtered[0].ID)
+	}
+}

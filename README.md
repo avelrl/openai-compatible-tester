@@ -211,6 +211,8 @@ Notes:
 - Canonical manual `curl` examples live in `details.md`. `api.http` is only a safe local scratch template.
 - `full_log.jsonl` stores step-based traces for multi-step tests, so tool/memory failures are easier to debug.
 
+Public, stable green references are summarized in [docs/reference-results.md](docs/reference-results.md).
+
 ## Known clients config
 
 `configs/clients.yaml` is evaluated per profile and per client target. Each target may declare one or more `modes`

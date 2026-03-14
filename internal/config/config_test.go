@@ -178,3 +178,44 @@ func TestLoadRejectsInvalidClientVerificationMetadata(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestLoadAcceptsProfileTestOverrides(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: kimi-tuned\n    chat_model: chat\n    responses_model: resp\n    tests:\n      chat.tool_call.required:\n        max_tokens: 128\n        reasoning_effort: omit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=fromenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       filepath.Join(dir, ".env"),
+	})
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	profile := cfg.Models.Profiles[0]
+	ov, ok := profile.Tests["chat.tool_call.required"]
+	if !ok {
+		t.Fatalf("expected profile test override")
+	}
+	if ov.MaxTokens == nil || *ov.MaxTokens != 128 {
+		t.Fatalf("max_tokens=%v, want 128", ov.MaxTokens)
+	}
+	if ov.ReasoningEffort != "omit" {
+		t.Fatalf("reasoning_effort=%q", ov.ReasoningEffort)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/avelrl/openai-compatible-tester/internal/config"
+	"github.com/avelrl/openai-compatible-tester/internal/tests"
 )
 
 func TestExecuteReturnsZeroForHelp(t *testing.T) {
@@ -75,7 +76,7 @@ func TestCollectSelectedTestIDsFromCSV(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "raw.csv")
 	content := "" +
-		"profile,pass,test_id,test_name,status,http_status,latency_ms,bytes_in,bytes_out,tokens,error_type,error_message,model,warmup,tool_choice_mode,reasoning_effort,litellm_timeout,function_call_observed\n" +
+		"profile,run_index,test_id,test_name,status,http_status,latency_ms,bytes_in,bytes_out,tokens,error_type,error_message,model,warmup,tool_choice_mode,reasoning_effort,litellm_timeout,function_call_observed\n" +
 		"p1,1,chat.basic,Chat basic,fail,200,10,0,0,0,assert,expected OK,m,false,,,,false\n" +
 		"p1,1,chat.stream,Chat stream,pass,200,10,0,0,0,,,,false,,,,false\n" +
 		"p1,1,responses.tool_call.required,Responses tool,timeout,0,0,0,0,0,timeout,deadline,m,false,,,,false\n" +
@@ -107,7 +108,7 @@ func TestCollectSelectedTestIDsMergesManualAndCSV(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "raw.csv")
 	content := "" +
-		"profile,pass,test_id,test_name,status,http_status,latency_ms,bytes_in,bytes_out,tokens,error_type,error_message,model,warmup,tool_choice_mode,reasoning_effort,litellm_timeout,function_call_observed\n" +
+		"profile,run_index,test_id,test_name,status,http_status,latency_ms,bytes_in,bytes_out,tokens,error_type,error_message,model,warmup,tool_choice_mode,reasoning_effort,litellm_timeout,function_call_observed\n" +
 		"p1,1,chat.basic,Chat basic,fail,200,10,0,0,0,assert,expected OK,m,false,,,,false\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -121,5 +122,29 @@ func TestCollectSelectedTestIDsMergesManualAndCSV(t *testing.T) {
 		if _, ok := got[testID]; !ok {
 			t.Fatalf("missing %s", testID)
 		}
+	}
+}
+
+func TestFilterTestsSkipsExplicitlyDisabledOverride(t *testing.T) {
+	disabled := false
+	cfg := config.Config{
+		Suite: config.SuiteConfig{
+			Stream: config.Toggle{Enabled: true},
+			Tests: map[string]config.TestOverride{
+				"responses.store_get": {Enabled: &disabled},
+			},
+		},
+	}
+	all := []tests.TestCase{
+		{ID: "responses.store_get", Name: "Responses store + GET"},
+		{ID: "chat.basic", Name: "Chat basic"},
+	}
+
+	filtered := filterTests(cfg, all, nil)
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 test after filtering, got %d", len(filtered))
+	}
+	if filtered[0].ID != "chat.basic" {
+		t.Fatalf("expected chat.basic to remain, got %s", filtered[0].ID)
 	}
 }

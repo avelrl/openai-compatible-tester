@@ -102,7 +102,7 @@ type FullLogRecord struct {
 	TestID               string            `json:"test_id"`
 	TestName             string            `json:"test_name"`
 	Profile              string            `json:"profile"`
-	Pass                 int               `json:"pass"`
+	RunIndex             int               `json:"run_index"`
 	Attempts             int               `json:"attempts"`
 	Model                string            `json:"model"`
 	Status               tests.Status      `json:"status"`
@@ -132,7 +132,7 @@ func WriteCSV(outDir string, results []tests.Result) error {
 	defer f.Close()
 	w := csv.NewWriter(f)
 	defer w.Flush()
-	header := []string{"profile", "pass", "attempts", "test_id", "test_name", "status", "http_status", "latency_ms", "bytes_in", "bytes_out", "tokens", "error_type", "error_message", "model", "warmup", "tool_choice_mode", "reasoning_effort", "litellm_timeout", "function_call_observed"}
+	header := []string{"profile", "run_index", "attempts", "test_id", "test_name", "status", "http_status", "latency_ms", "bytes_in", "bytes_out", "tokens", "error_type", "error_message", "model", "warmup", "tool_choice_mode", "reasoning_effort", "litellm_timeout", "function_call_observed"}
 	if err := w.Write(header); err != nil {
 		return err
 	}
@@ -182,7 +182,7 @@ func WriteFullLogJSONL(outDir string, results []tests.Result) error {
 			TestID:               r.TestID,
 			TestName:             r.TestName,
 			Profile:              r.Profile,
-			Pass:                 r.Pass,
+			RunIndex:             r.Pass,
 			Attempts:             r.Attempts,
 			Model:                r.Model,
 			Status:               r.Status,
@@ -283,7 +283,7 @@ func Analyze(results []tests.Result, cfg config.Config) Analysis {
 	stats := buildStats(results, cfg)
 	flaky := make([]TestStats, 0)
 	for _, s := range stats {
-		if s.Total > 0 && s.PassRate < 1.0 {
+		if s.Total > 1 && s.Passes > 0 && s.PassRate < 1.0 {
 			flaky = append(flaky, s)
 		}
 	}

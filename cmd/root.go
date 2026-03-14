@@ -229,6 +229,9 @@ func filterTests(cfg config.Config, all []tests.TestCase, selected map[string]st
 				continue
 			}
 		}
+		if ov, ok := cfg.Suite.Tests[t.ID]; ok && ov.Enabled != nil && !*ov.Enabled {
+			continue
+		}
 		if t.RequiresStream && !cfg.Suite.Stream.Enabled {
 			continue
 		}

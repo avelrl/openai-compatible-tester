@@ -1,46 +1,4 @@
 profiles:
-  - name: "openrouter-qwen35-9b"
-    chat_model: "qwen/qwen3.5-9b"
-    responses_model: "qwen/qwen3.5-9b"
-    reasoning_effort: "minimal"
-    temperature: 0
-    extra: {}
-
-  - name: "openrouter-qwen25-7b"
-    chat_model: "qwen/qwen-2.5-7b-instruct"
-    responses_model: "qwen/qwen-2.5-7b-instruct"
-    reasoning_effort: "minimal"
-    temperature: 0
-    extra: {}
-
-  - name: "openrouter-mercury-2"
-    chat_model: "inception/mercury-2"
-    responses_model: "inception/mercury-2"
-    reasoning_effort: "minimal"
-    temperature: 0
-    extra: {}
-
-  - name: "openrouter-mercury-2-nitro"
-    chat_model: "inception/mercury-2:nitro"
-    responses_model: "inception/mercury-2:nitro"
-    reasoning_effort: "minimal"
-    temperature: 0
-    extra: {}
-
-  - name: "openrouter-mistral-small-32"
-    chat_model: "mistralai/mistral-small-3.2-24b-instruct"
-    responses_model: "mistralai/mistral-small-3.2-24b-instruct"
-    reasoning_effort: "minimal"
-    temperature: 0
-    extra: {}
-
-  - name: "openrouter-gemma3-27b"
-    chat_model: "google/gemma-3-27b-it"
-    responses_model: "google/gemma-3-27b-it"
-    reasoning_effort: "minimal"
-    temperature: 0
-    extra: {}
-
   - name: "openrouter-gpt5-mini"
     chat_model: "openai/gpt-5-mini"
     responses_model: "openai/gpt-5-mini"
@@ -48,4 +6,64 @@ profiles:
     temperature: 0
     extra: {}
 
+  - name: "openrouter-glm-5"
+    chat_model: "z-ai/glm-5"
+    responses_model: "z-ai/glm-5"
+    temperature: 0
+    extra: {}
+    tests:
+      chat.tool_call:
+        max_tokens: 256
+      chat.tool_call.required:
+        max_tokens: 128
+      chat.structured.json_object:
+        max_tokens: 384
+      chat.structured.json_schema:
+        max_tokens: 384
+      responses.tool_call.required:
+        max_output_tokens: 256
 
+  - name: "openrouter-deepseek-3.2"
+    chat_model: "deepseek/deepseek-v3.2"
+    responses_model: "deepseek/deepseek-v3.2"
+    reasoning_effort: "minimal"
+    temperature: 0
+    extra: {}
+
+  - name: "openrouter-kimi-k2.5"
+    chat_model: "moonshotai/kimi-k2.5"
+    responses_model: "moonshotai/kimi-k2.5"
+    temperature: 0
+    extra: {}
+    tests:
+      chat.tool_call:
+        max_tokens: 96
+      chat.tool_call.required:
+        max_tokens: 128
+      chat.structured.json_object:
+        max_tokens: 384
+      chat.structured.json_schema:
+        max_tokens: 384
+      responses.structured.json_object:
+        max_output_tokens: 192
+      responses.structured.json_schema:
+        max_output_tokens: 192
+
+  - name: "openrouter-qwen3.5-397b-a17b"
+    chat_model: "qwen/qwen3.5-397b-a17b"
+    responses_model: "qwen/qwen3.5-397b-a17b"
+    temperature: 0
+    extra: {}
+    tests:
+      chat.tool_call:
+        max_tokens: 128
+      chat.tool_call.required:
+        max_tokens: 128
+      chat.structured.json_object:
+        max_tokens: 384
+      chat.structured.json_schema:
+        max_tokens: 384
+      responses.structured.json_object:
+        max_output_tokens: 192
+      responses.structured.json_schema:
+        max_output_tokens: 192

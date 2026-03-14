@@ -274,9 +274,94 @@ func baseChatPayload(profile config.ModelProfile, suite config.SuiteConfig) map[
 	return payload
 }
 
+func applyChatReasoningOverride(payload map[string]interface{}, effort string) {
+	effort = strings.TrimSpace(effort)
+	switch effort {
+	case "", "omit":
+		delete(payload, "reasoning")
+	default:
+		payload["reasoning"] = map[string]interface{}{"effort": effort}
+	}
+}
+
+func applyResponsesReasoningOverride(payload map[string]interface{}, effort string) {
+	effort = strings.TrimSpace(effort)
+	switch effort {
+	case "", "omit":
+		delete(payload, "reasoning")
+	default:
+		payload["reasoning"] = map[string]interface{}{"effort": effort}
+	}
+}
+
+func effectiveChatMaxTokens(ov config.TestOverride) int {
+	if ov.MaxTokens != nil && *ov.MaxTokens > 0 {
+		return *ov.MaxTokens
+	}
+	if ov.MaxOutputTokens != nil && *ov.MaxOutputTokens > 0 {
+		// Convenience: allow using max_output_tokens for chat tests too.
+		return *ov.MaxOutputTokens
+	}
+	return 64
+}
+
+func effectiveResponsesMaxOutputTokens(ov config.TestOverride) *int {
+	if ov.MaxOutputTokens != nil && *ov.MaxOutputTokens > 0 {
+		mt := *ov.MaxOutputTokens
+		return &mt
+	}
+	return nil
+}
+
+func chatMaxTokensOverride(ov config.TestOverride) *int {
+	if ov.MaxTokens != nil && *ov.MaxTokens > 0 {
+		mt := *ov.MaxTokens
+		return &mt
+	}
+	if ov.MaxOutputTokens != nil && *ov.MaxOutputTokens > 0 {
+		mt := *ov.MaxOutputTokens
+		return &mt
+	}
+	return nil
+}
+
+func effectiveChatReasoningEffort(profile config.ModelProfile, suite config.SuiteConfig, ov config.TestOverride) string {
+	if eff := strings.TrimSpace(ov.ReasoningEffort); eff != "" {
+		return eff
+	}
+	if suite.ChatReasoning.Enabled {
+		if eff := strings.TrimSpace(profile.ReasoningEffort); eff != "" {
+			return eff
+		}
+	}
+	return "omit"
+}
+
+func effectiveResponsesReasoningEffort(profile config.ModelProfile, ov config.TestOverride) string {
+	if eff := strings.TrimSpace(ov.ReasoningEffort); eff != "" {
+		return eff
+	}
+	if eff := strings.TrimSpace(profile.ReasoningEffort); eff != "" {
+		return eff
+	}
+	return "omit"
+}
+
+func applyStreamTimeoutHeader(headers map[string]string, cfg config.Config, profile config.ModelProfile, testID string, ov config.TestOverride) {
+	if headers == nil {
+		return
+	}
+	if effectiveHeaderValueForTest(cfg, profile, testID, "x-litellm-stream-timeout") != "" {
+		return
+	}
+	if ov.StreamTimeoutSeconds > 0 {
+		headers["x-litellm-stream-timeout"] = strconv.Itoa(ov.StreamTimeoutSeconds)
+	}
+}
+
 func runModelsList(ctx context.Context, rc RunContext) Result {
 	result := baseResult("sanity.models", "GET /v1/models", rc)
-	headers := requestHeadersForTest(rc.Config, "sanity.models")
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "sanity.models")
 	resp, err := rc.Client.Get(ctx, rc.Config.Endpoints.Paths.Models, headers)
 	if err != nil {
 		return failResult(result, err, "http_error")
@@ -301,7 +386,7 @@ func runModelsList(ctx context.Context, rc RunContext) Result {
 
 func runResponsesBasic(ctx context.Context, rc RunContext) Result {
 	result := baseResult("responses.basic", "Responses basic", rc)
-	headers := requestHeadersForTest(rc.Config, "responses.basic")
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "responses.basic")
 	payload := baseResponsesPayload(rc.Profile)
 	payload["input"] = "ping: answer with OK"
 	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
@@ -314,7 +399,7 @@ func runResponsesBasic(ctx context.Context, rc RunContext) Result {
 
 func runResponsesStoreGet(ctx context.Context, rc RunContext) Result {
 	result := baseResult("responses.store_get", "Responses store + GET", rc)
-	headers := requestHeadersForTest(rc.Config, "responses.store_get")
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "responses.store_get")
 	payload := baseResponsesPayload(rc.Profile)
 	payload["input"] = "Say OK and nothing else"
 	payload["store"] = true
@@ -368,7 +453,7 @@ func runResponsesStoreGet(ctx context.Context, rc RunContext) Result {
 		result.LatencyMS = getResp.Latency.Milliseconds()
 		result.BytesIn = getResp.BytesIn
 		result.BytesOut = getResp.BytesOut
-		if isEndpointMissing(getResp.StatusCode) {
+		if isEndpointMissing(getResp.StatusCode) || wrappedUpstreamStatus(getResp.Body, getResp.StatusCode) == http.StatusNotFound {
 			return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", getResp.StatusCode))
 		}
 		if isGetUnsupported(getResp.Body) {
@@ -388,11 +473,16 @@ func runResponsesStoreGet(ctx context.Context, rc RunContext) Result {
 
 func runResponsesStructuredSchema(ctx context.Context, rc RunContext) Result {
 	result := baseResult("responses.structured.json_schema", "Responses structured json_schema", rc)
-	headers := requestHeadersForTest(rc.Config, "responses.structured.json_schema")
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "responses.structured.json_schema")
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "responses.structured.json_schema")
 	payload := baseResponsesPayload(rc.Profile)
+	applyResponsesReasoningOverride(payload, effectiveResponsesReasoningEffort(rc.Profile, ov))
+	if maxOutputTokens := effectiveResponsesMaxOutputTokens(ov); maxOutputTokens != nil {
+		payload["max_output_tokens"] = *maxOutputTokens
+	}
 	payload["input"] = []map[string]string{
 		{"role": "system", "content": "Return JSON strictly according to the schema."},
-		{"role": "user", "content": "Generate an object with status ok and the number 42."},
+		{"role": "user", "content": "Generate an object with status=\"ok\" and value=42."},
 	}
 	payload["text"] = map[string]interface{}{
 		"format": map[string]interface{}{
@@ -420,8 +510,13 @@ func runResponsesStructuredSchema(ctx context.Context, rc RunContext) Result {
 
 func runResponsesStructuredObject(ctx context.Context, rc RunContext) Result {
 	result := baseResult("responses.structured.json_object", "Responses structured json_object", rc)
-	headers := requestHeadersForTest(rc.Config, "responses.structured.json_object")
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "responses.structured.json_object")
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "responses.structured.json_object")
 	payload := baseResponsesPayload(rc.Profile)
+	applyResponsesReasoningOverride(payload, effectiveResponsesReasoningEffort(rc.Profile, ov))
+	if maxOutputTokens := effectiveResponsesMaxOutputTokens(ov); maxOutputTokens != nil {
+		payload["max_output_tokens"] = *maxOutputTokens
+	}
 	payload["input"] = []map[string]string{
 		{"role": "system", "content": "You output JSON only."},
 		{"role": "user", "content": "Return JSON like {\"ok\":true}."},
@@ -447,8 +542,8 @@ func runResponsesToolCallRequired(ctx context.Context, rc RunContext) Result {
 
 func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, name, forcedMode string) Result {
 	result := baseResult(testID, name, rc)
-	headers := requestHeadersForTest(rc.Config, testID)
-	ov, _ := testOverride(rc.Config, testID)
+	headers := requestHeadersForTest(rc.Config, rc.Profile, testID)
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, testID)
 
 	mode := strings.TrimSpace(ov.ToolChoiceMode)
 	if forcedMode != "" {
@@ -473,16 +568,7 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 	if ov.StrictMode != nil {
 		strict = *ov.StrictMode
 	}
-	var maxOutputTokens *int
-	if ov.MaxOutputTokens != nil {
-		mt := *ov.MaxOutputTokens
-		if mt > 64 {
-			mt = 64
-		}
-		if mt > 0 {
-			maxOutputTokens = &mt
-		}
-	}
+	maxOutputTokens := effectiveResponsesMaxOutputTokens(ov)
 	useStream := false
 	if rc.Config.Suite.Stream.Enabled && ov.Stream != nil {
 		useStream = *ov.Stream
@@ -490,7 +576,7 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 
 	result.ToolChoiceMode = mode
 	result.ReasoningEffort = reasoningEffort
-	result.LiteLLMTimeout = effectiveHeaderValueForTest(rc.Config, testID, "x-litellm-timeout")
+	result.LiteLLMTimeout = effectiveHeaderValueForTest(rc.Config, rc.Profile, testID, "x-litellm-timeout")
 
 	payload := baseResponsesPayload(rc.Profile)
 	switch mode {
@@ -552,7 +638,7 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 	if useStream {
 		streamHeaders := cloneHeaders(headers)
 		streamHeaders["Accept"] = "text/event-stream"
-		if effectiveHeaderValueForTest(rc.Config, testID, "x-litellm-stream-timeout") == "" {
+		if effectiveHeaderValueForTest(rc.Config, rc.Profile, testID, "x-litellm-stream-timeout") == "" {
 			streamTimeoutSeconds := ov.StreamTimeoutSeconds
 			if streamTimeoutSeconds <= 0 {
 				streamTimeoutSeconds = 30
@@ -689,7 +775,7 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 
 func runResponsesErrorShape(ctx context.Context, rc RunContext) Result {
 	result := baseResult("responses.error_shape", "Responses error shape", rc)
-	headers := requestHeadersForTest(rc.Config, "responses.error_shape")
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "responses.error_shape")
 	payload := map[string]interface{}{
 		"model": rc.Profile.ResponsesModel,
 		"input": 1, // invalid input type
@@ -726,7 +812,7 @@ func runResponsesErrorShape(ctx context.Context, rc RunContext) Result {
 
 func runResponsesMemory(ctx context.Context, rc RunContext) Result {
 	result := baseResult("responses.memory.prev_id", "Responses memory (previous_response_id)", rc)
-	headers := requestHeadersForTest(rc.Config, "responses.memory.prev_id")
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "responses.memory.prev_id")
 	payload := baseResponsesPayload(rc.Profile)
 	payload["input"] = "Remember: my code = 123. Reply OK"
 	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
@@ -735,6 +821,11 @@ func runResponsesMemory(ctx context.Context, rc RunContext) Result {
 	if err != nil {
 		return failResult(result, err, "http_error")
 	}
+	result.HTTPStatus = resp.StatusCode
+	result.LatencyMS = resp.Latency.Milliseconds()
+	result.BytesIn = resp.BytesIn
+	result.BytesOut = resp.BytesOut
+	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
 	updateTraceStepResponse(&result, "remember_value", string(resp.Body))
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
@@ -769,7 +860,7 @@ func runResponsesMemory(ctx context.Context, rc RunContext) Result {
 
 func runResponsesConversations(ctx context.Context, rc RunContext) Result {
 	result := baseResult("responses.conversations", "Responses conversations", rc)
-	headers := requestHeadersForTest(rc.Config, "responses.conversations")
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "responses.conversations")
 	payload := map[string]interface{}{
 		"items": []map[string]string{
 			{"type": "message", "role": "system", "content": "You are a test assistant."},
@@ -820,7 +911,7 @@ func runResponsesConversations(ctx context.Context, rc RunContext) Result {
 func runChatBasic(ctx context.Context, rc RunContext) Result {
 	result := baseResult("chat.basic", "Chat completions basic", rc)
 	result.Model = rc.Profile.ChatModel
-	headers := requestHeadersForTest(rc.Config, "chat.basic")
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "chat.basic")
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
 	payload["messages"] = []map[string]string{
 		{"role": "developer", "content": "Reply with exactly OK"},
@@ -837,12 +928,17 @@ func runChatBasic(ctx context.Context, rc RunContext) Result {
 func runChatStream(ctx context.Context, rc RunContext) Result {
 	result := baseResult("chat.stream", "Chat completions streaming", rc)
 	result.Model = rc.Profile.ChatModel
-	headers := cloneHeaders(requestHeadersForTest(rc.Config, "chat.stream"))
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "chat.stream")
+	headers := cloneHeaders(requestHeadersForTest(rc.Config, rc.Profile, "chat.stream"))
 	headers["Accept"] = "text/event-stream"
+	applyStreamTimeoutHeader(headers, rc.Config, rc.Profile, "chat.stream", ov)
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
+	if maxTokens := chatMaxTokensOverride(ov); maxTokens != nil {
+		payload["max_tokens"] = *maxTokens
+	}
 	payload["stream"] = true
 	payload["messages"] = []map[string]string{
-		{"role": "developer", "content": "Stream one word: HELLO"},
+		{"role": "developer", "content": "Reply with exactly HELLO and nothing else. Stream it one character at a time."},
 		{"role": "user", "content": "go"},
 	}
 	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
@@ -858,9 +954,14 @@ func runChatStream(ctx context.Context, rc RunContext) Result {
 		delta, isDone := parseChatStreamEvent(ev.Data)
 		if delta != "" {
 			text.WriteString(delta)
+			if normalizeStreamText(text.String()) == "HELLO" {
+				done = true
+				return sse.ErrStop
+			}
 		}
 		if isDone {
 			done = true
+			return sse.ErrStop
 		}
 		return nil
 	})
@@ -888,6 +989,9 @@ func runChatStream(ctx context.Context, rc RunContext) Result {
 	if strings.TrimSpace(text.String()) == "" {
 		return failResult(result, errors.New("empty stream"), "stream")
 	}
+	if normalizeStreamText(text.String()) != "HELLO" {
+		return failResult(result, errors.New("expected HELLO"), "assert")
+	}
 	result.Status = StatusPass
 	return result
 }
@@ -903,8 +1007,8 @@ func runChatToolCallRequired(ctx context.Context, rc RunContext) Result {
 func runChatToolCallVariant(ctx context.Context, rc RunContext, testID, name, forcedMode string) Result {
 	result := baseResult(testID, name, rc)
 	result.Model = rc.Profile.ChatModel
-	headers := requestHeadersForTest(rc.Config, testID)
-	ov, _ := testOverride(rc.Config, testID)
+	headers := requestHeadersForTest(rc.Config, rc.Profile, testID)
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, testID)
 
 	mode := strings.TrimSpace(ov.ToolChoiceMode)
 	if forcedMode != "" {
@@ -925,30 +1029,17 @@ func runChatToolCallVariant(ctx context.Context, rc RunContext, testID, name, fo
 	if ov.StrictMode != nil {
 		strict = *ov.StrictMode
 	}
-	maxTokens := 64
-	if ov.MaxTokens != nil && *ov.MaxTokens > 0 {
-		maxTokens = *ov.MaxTokens
-	} else if ov.MaxOutputTokens != nil && *ov.MaxOutputTokens > 0 {
-		// Convenience: allow using max_output_tokens for chat, too.
-		maxTokens = *ov.MaxOutputTokens
-	}
-	if maxTokens > 64 {
-		maxTokens = 64
-	}
+	maxTokens := effectiveChatMaxTokens(ov)
 
 	result.ToolChoiceMode = mode
-	// Chat "reasoning" is feature-gated; treat it as omitted unless enabled.
-	if strings.TrimSpace(ov.ReasoningEffort) != "" {
-		result.ReasoningEffort = strings.TrimSpace(ov.ReasoningEffort)
-	} else {
-		result.ReasoningEffort = "omit"
-	}
-	result.LiteLLMTimeout = effectiveHeaderValueForTest(rc.Config, testID, "x-litellm-timeout")
+	result.ReasoningEffort = effectiveChatReasoningEffort(rc.Profile, rc.Config.Suite, ov)
+	result.LiteLLMTimeout = effectiveHeaderValueForTest(rc.Config, rc.Profile, testID, "x-litellm-timeout")
 
 	step1Prompt := fmt.Sprintf("Call %s with a=40 and b=2. Do not answer yourself.", toolName)
 	step2Prompt := "Reply with just the number."
 
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
+	applyChatReasoningOverride(payload, result.ReasoningEffort)
 	switch mode {
 	case "forced":
 		payload["tool_choice"] = map[string]interface{}{
@@ -1025,6 +1116,7 @@ func runChatToolCallVariant(ctx context.Context, rc RunContext, testID, name, fo
 	result.FunctionCallObserved = true
 
 	payload2 := baseChatPayload(rc.Profile, rc.Config.Suite)
+	applyChatReasoningOverride(payload2, result.ReasoningEffort)
 	payload2["parallel_tool_calls"] = parallel
 	payload2["max_tokens"] = maxTokens
 	payload2["tools"] = payload["tools"]
@@ -1056,7 +1148,7 @@ func runChatToolCallVariant(ctx context.Context, rc RunContext, testID, name, fo
 func runChatErrorShape(ctx context.Context, rc RunContext) Result {
 	result := baseResult("chat.error_shape", "Chat error shape", rc)
 	result.Model = rc.Profile.ChatModel
-	headers := requestHeadersForTest(rc.Config, "chat.error_shape")
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "chat.error_shape")
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
 	payload["messages"] = 1 // invalid messages type
 	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
@@ -1088,7 +1180,7 @@ func runChatErrorShape(ctx context.Context, rc RunContext) Result {
 func runChatMemory(ctx context.Context, rc RunContext) Result {
 	result := baseResult("chat.memory", "Chat memory", rc)
 	result.Model = rc.Profile.ChatModel
-	headers := requestHeadersForTest(rc.Config, "chat.memory")
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "chat.memory")
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
 	payload["messages"] = []map[string]string{
 		{"role": "user", "content": "Remember: code=999. Reply OK"},
@@ -1106,11 +1198,16 @@ func runChatMemory(ctx context.Context, rc RunContext) Result {
 func runChatStructuredSchema(ctx context.Context, rc RunContext) Result {
 	result := baseResult("chat.structured.json_schema", "Chat structured json_schema", rc)
 	result.Model = rc.Profile.ChatModel
-	headers := requestHeadersForTest(rc.Config, "chat.structured.json_schema")
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "chat.structured.json_schema")
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "chat.structured.json_schema")
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
+	applyChatReasoningOverride(payload, effectiveChatReasoningEffort(rc.Profile, rc.Config.Suite, ov))
+	if maxTokens := chatMaxTokensOverride(ov); maxTokens != nil {
+		payload["max_tokens"] = *maxTokens
+	}
 	payload["messages"] = []map[string]string{
 		{"role": "system", "content": "Return JSON strictly according to the schema."},
-		{"role": "user", "content": "Generate an object with status ok and the number 42."},
+		{"role": "user", "content": "Generate an object with status=\"ok\" and value=42."},
 	}
 	payload["response_format"] = map[string]interface{}{
 		"type": "json_schema",
@@ -1139,8 +1236,13 @@ func runChatStructuredSchema(ctx context.Context, rc RunContext) Result {
 func runChatStructuredObject(ctx context.Context, rc RunContext) Result {
 	result := baseResult("chat.structured.json_object", "Chat structured json_object", rc)
 	result.Model = rc.Profile.ChatModel
-	headers := requestHeadersForTest(rc.Config, "chat.structured.json_object")
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "chat.structured.json_object")
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "chat.structured.json_object")
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
+	applyChatReasoningOverride(payload, effectiveChatReasoningEffort(rc.Profile, rc.Config.Suite, ov))
+	if maxTokens := chatMaxTokensOverride(ov); maxTokens != nil {
+		payload["max_tokens"] = *maxTokens
+	}
 	payload["messages"] = []map[string]string{
 		{"role": "system", "content": "You output JSON only."},
 		{"role": "user", "content": "Return JSON like {\"ok\":true}."},
@@ -1528,6 +1630,23 @@ func isGetUnsupported(body []byte) bool {
 	return false
 }
 
+func wrappedUpstreamStatus(body []byte, statusCode int) int {
+	if statusCode < 500 {
+		return 0
+	}
+	msg := strings.ToLower(errorMessage(body))
+	switch {
+	case strings.Contains(msg, "'code': 404"), strings.Contains(msg, `"code":404`), strings.Contains(msg, `"code": 404`):
+		return http.StatusNotFound
+	case strings.Contains(msg, "'code': 405"), strings.Contains(msg, `"code":405`), strings.Contains(msg, `"code": 405`):
+		return http.StatusMethodNotAllowed
+	case strings.Contains(msg, "'code': 400"), strings.Contains(msg, `"code":400`), strings.Contains(msg, `"code": 400`):
+		return http.StatusBadRequest
+	default:
+		return 0
+	}
+}
+
 func isUnexpectedEndpointOrMethod(body []byte) bool {
 	msg := strings.ToLower(errorMessage(body))
 	return strings.Contains(msg, "unexpected endpoint or method")
@@ -1865,6 +1984,10 @@ func matchesExpectedText(text string, expected string, allowRepeatedScalar bool)
 	return false
 }
 
+func normalizeStreamText(text string) string {
+	return strings.Join(strings.Fields(text), "")
+}
+
 func validateAddToolCallArgs(raw string, wantA, wantB int) error {
 	if strings.TrimSpace(raw) == "" {
 		return errors.New("missing tool call arguments")
@@ -2069,8 +2192,33 @@ func parseResponsesStreamEvent(data string) (string, bool) {
 		return "", false
 	}
 	if t, ok := doc["type"].(string); ok {
-		if strings.HasSuffix(t, ".done") || strings.HasSuffix(t, ".completed") || strings.Contains(t, "response.completed") {
+		switch t {
+		case "response.completed":
 			return "", true
+		case "response.output_text.delta":
+			if delta, ok := doc["delta"].(string); ok {
+				return delta, false
+			}
+		case "response.output_text.done":
+			if text, ok := doc["text"].(string); ok {
+				return text, true
+			}
+			return "", true
+		case "response.content_part.added":
+			part, _ := doc["part"].(map[string]interface{})
+			if part == nil {
+				return "", false
+			}
+			if partType, _ := part["type"].(string); partType != "output_text" {
+				return "", false
+			}
+			if text, ok := part["text"].(string); ok {
+				return text, false
+			}
+			return "", false
+		default:
+			// Ignore reasoning and non-text events when validating streamed user-visible output.
+			return "", false
 		}
 	}
 	if delta, ok := doc["delta"].(map[string]interface{}); ok {
@@ -2090,11 +2238,19 @@ func parseResponsesStreamEvent(data string) (string, bool) {
 // runResponsesStream implemented after helper to avoid forward ref
 func runResponsesStream(ctx context.Context, rc RunContext) Result {
 	result := baseResult("responses.stream", "Responses streaming", rc)
-	headers := cloneHeaders(requestHeadersForTest(rc.Config, "responses.stream"))
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "responses.stream")
+	headers := cloneHeaders(requestHeadersForTest(rc.Config, rc.Profile, "responses.stream"))
 	headers["Accept"] = "text/event-stream"
+	applyStreamTimeoutHeader(headers, rc.Config, rc.Profile, "responses.stream", ov)
 	payload := baseResponsesPayload(rc.Profile)
+	if maxOutputTokens := effectiveResponsesMaxOutputTokens(ov); maxOutputTokens != nil {
+		payload["max_output_tokens"] = *maxOutputTokens
+	}
 	payload["stream"] = true
-	payload["input"] = "Stream test: print 'HELLO' one char at a time"
+	payload["input"] = []map[string]string{
+		{"role": "system", "content": "Reply with exactly HELLO and nothing else."},
+		{"role": "user", "content": "go"},
+	}
 	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
 	var text strings.Builder
 	var raw strings.Builder
@@ -2108,9 +2264,14 @@ func runResponsesStream(ctx context.Context, rc RunContext) Result {
 		delta, isDone := parseResponsesStreamEvent(ev.Data)
 		if delta != "" {
 			text.WriteString(delta)
+			if normalizeStreamText(text.String()) == "HELLO" {
+				done = true
+				return sse.ErrStop
+			}
 		}
 		if isDone {
 			done = true
+			return sse.ErrStop
 		}
 		return nil
 	})
@@ -2137,6 +2298,9 @@ func runResponsesStream(ctx context.Context, rc RunContext) Result {
 	}
 	if strings.TrimSpace(text.String()) == "" {
 		return failResult(result, errors.New("empty stream"), "stream")
+	}
+	if normalizeStreamText(text.String()) != "HELLO" {
+		return failResult(result, errors.New("expected HELLO"), "assert")
 	}
 	result.Status = StatusPass
 	return result
