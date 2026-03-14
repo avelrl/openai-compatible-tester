@@ -59,12 +59,12 @@ type ModelsConfig struct {
 }
 
 type ModelProfile struct {
-	Name            string                 `yaml:"name"`
-	ChatModel       string                 `yaml:"chat_model"`
-	ResponsesModel  string                 `yaml:"responses_model"`
-	ReasoningEffort string                 `yaml:"reasoning_effort"`
-	Temperature     *float64               `yaml:"temperature"`
-	Extra           map[string]interface{} `yaml:"extra"`
+	Name            string                  `yaml:"name"`
+	ChatModel       string                  `yaml:"chat_model"`
+	ResponsesModel  string                  `yaml:"responses_model"`
+	ReasoningEffort string                  `yaml:"reasoning_effort"`
+	Temperature     *float64                `yaml:"temperature"`
+	Extra           map[string]interface{}  `yaml:"extra"`
 	Tests           map[string]TestOverride `yaml:"tests"`
 }
 

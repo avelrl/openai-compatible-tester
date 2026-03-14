@@ -293,7 +293,7 @@ func TestTestOverrideForProfileMergesSuiteDefaults(t *testing.T) {
 		Name: "kimi-tuned",
 		Tests: map[string]config.TestOverride{
 			"chat.tool_call.required": {
-				TimeoutSeconds: 45,
+				TimeoutSeconds:  45,
 				ReasoningEffort: "omit",
 			},
 		},
