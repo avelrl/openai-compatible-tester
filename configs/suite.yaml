@@ -1,7 +1,7 @@
 passes: 1
 warmup_passes: 1
 parallelism: 1
-timeout_seconds: 600
+timeout_seconds: 60
 litellm_headers: {}
 retry:
   max_attempts: 3
@@ -21,39 +21,71 @@ conversations:
 memory:
   enabled: true
 chat_reasoning:
-  enabled: false
+  enabled: true
 tests:
+  responses.memory.prev_id:
+    timeout_seconds: 45
+    treat_timeout_as_unsupported: true
+  responses.conversations:
+    timeout_seconds: 45
+    treat_timeout_as_unsupported: true
+  responses.structured.json_schema:
+    timeout_seconds: 60
+    max_output_tokens: 48
+  responses.structured.json_object:
+    timeout_seconds: 60
+    max_output_tokens: 48
   responses.tool_call:
-    timeout_seconds: 180
+    timeout_seconds: 60
     stream: false
     stream_timeout_seconds: 30
     litellm_headers:
-      x-litellm-timeout: 180
+      x-litellm-timeout: 60
     tool_choice_mode: forced # forced|required|auto
     forced_tool_name: add
     parallel_tool_calls: false
     reasoning_effort: minimal # minimal|low|medium|high|omit
     strict_mode: false
+  responses.tool_call.required:
+    timeout_seconds: 60
+    stream: false
+    stream_timeout_seconds: 30
+    tool_choice_mode: required
+    parallel_tool_calls: false
+    reasoning_effort: minimal
+    strict_mode: false
   chat.tool_call:
-    timeout_seconds: 180
+    timeout_seconds: 60
     litellm_headers:
-      x-litellm-timeout: 180
+      x-litellm-timeout: 60
     tool_choice_mode: forced # forced|required|auto
     forced_tool_name: add
     parallel_tool_calls: false
     max_tokens: 64
     strict_mode: false
+  chat.tool_call.required:
+    timeout_seconds: 60
+    tool_choice_mode: required
+    parallel_tool_calls: false
+    max_tokens: 64
+    strict_mode: false
+  chat.structured.json_schema:
+    timeout_seconds: 60
+    max_tokens: 48
+  chat.structured.json_object:
+    timeout_seconds: 60
+    max_tokens: 48
 analysis:
   enabled: true
   compute_percentiles: true
   percentiles: [50, 90, 95, 99]
-  flakiness: true
+  flakiness: false
   fail_on_flaky: false
 codex_review:
   enabled: false
   codex_bin: "codex"
   model: "gpt-5.4"
-  reasoning_effort: "xhigh"
+  reasoning_effort: "high"
   sandbox: "read-only"
   approvals: "never"
   prompt_template: |

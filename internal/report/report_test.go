@@ -65,6 +65,9 @@ func TestWriteReports(t *testing.T) {
 		t.Fatalf("read full_log.jsonl: %v", err)
 	}
 	content := string(b)
+	if !strings.Contains(content, "\"run_index\"") {
+		t.Fatalf("full_log.jsonl missing run_index field: %s", content)
+	}
 	if !strings.Contains(content, "\"steps\"") {
 		t.Fatalf("full_log.jsonl missing steps field: %s", content)
 	}
@@ -90,6 +93,14 @@ func TestWriteReports(t *testing.T) {
 	}
 	if !strings.Contains(string(summaryMD), "endpoint_missing") {
 		t.Fatalf("summary.md missing unsupported feature details: %s", string(summaryMD))
+	}
+
+	rawCSV, err := os.ReadFile(filepath.Join(dir, "raw.csv"))
+	if err != nil {
+		t.Fatalf("read raw.csv: %v", err)
+	}
+	if !strings.HasPrefix(string(rawCSV), "profile,run_index,attempts,") {
+		t.Fatalf("raw.csv missing run_index header: %s", string(rawCSV))
 	}
 }
 
@@ -211,5 +222,24 @@ func TestAnalyzeClientCompatibilityChoosesBestMode(t *testing.T) {
 	}
 	if row.RequiredPassed != 3 || row.RequiredTotal != 3 {
 		t.Fatalf("unexpected required coverage: %+v", row)
+	}
+}
+
+func TestAnalyzeFlakinessOnlyCountsMixedMultiRunResults(t *testing.T) {
+	cfg := config.Config{}
+
+	analysis := Analyze([]tests.Result{
+		{TestID: "t1", TestName: "Test1", Profile: "p1", Status: tests.StatusFail},
+	}, cfg)
+	if len(analysis.Flaky) != 0 {
+		t.Fatalf("single fail should not be considered flaky: %+v", analysis.Flaky)
+	}
+
+	analysis = Analyze([]tests.Result{
+		{TestID: "t1", TestName: "Test1", Profile: "p1", Status: tests.StatusPass},
+		{TestID: "t1", TestName: "Test1", Profile: "p1", Status: tests.StatusFail},
+	}, cfg)
+	if len(analysis.Flaky) != 1 {
+		t.Fatalf("expected mixed multi-run result to be flaky: %+v", analysis.Flaky)
 	}
 }

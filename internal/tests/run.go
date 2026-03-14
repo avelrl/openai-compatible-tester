@@ -172,13 +172,13 @@ func (r *Runner) runTestWithRetries(ctx context.Context, test TestCase, job job)
 	var res Result
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		timeoutSeconds := r.cfg.Suite.TimeoutSeconds
-		if ov, ok := r.cfg.Suite.Tests[test.ID]; ok && ov.TimeoutSeconds > 0 {
+		if ov, ok := testOverrideForProfile(r.cfg, job.Profile, test.ID); ok && ov.TimeoutSeconds > 0 {
 			timeoutSeconds = ov.TimeoutSeconds
 		}
 		runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 		res = r.safeRunTest(runCtx, test, job)
 		cancel()
-		res = r.applyTimeoutPolicy(test.ID, job.Profile.Name, res)
+		res = r.applyTimeoutPolicy(test.ID, job.Profile, res)
 		res.Attempts = attempt
 		if !shouldRetryTestResult(res) || attempt == maxAttempts || ctx.Err() != nil {
 			return res
@@ -194,12 +194,12 @@ func shouldRetryTestResult(res Result) bool {
 	return res.Status == StatusFail || res.Status == StatusTimeout
 }
 
-func (r *Runner) applyTimeoutPolicy(testID, profile string, res Result) Result {
+func (r *Runner) applyTimeoutPolicy(testID string, profile config.ModelProfile, res Result) Result {
 	if res.Status != StatusTimeout {
 		return res
 	}
-	if ov, ok := r.cfg.Suite.Tests[testID]; ok && ov.TreatTimeoutAsUnsupported {
-		if len(ov.TreatTimeoutAsUnsupportedProfiles) == 0 || containsString(ov.TreatTimeoutAsUnsupportedProfiles, profile) {
+	if ov, ok := testOverrideForProfile(r.cfg, profile, testID); ok && ov.TreatTimeoutAsUnsupported {
+		if len(ov.TreatTimeoutAsUnsupportedProfiles) == 0 || containsString(ov.TreatTimeoutAsUnsupportedProfiles, profile.Name) {
 			res.Status = StatusUnsupported
 		}
 	}
@@ -296,6 +296,9 @@ func modelFor(test TestCase, profile config.ModelProfile) string {
 func (r *Runner) filterTests() []TestCase {
 	out := make([]TestCase, 0, len(r.tests))
 	for _, t := range r.tests {
+		if ov, ok := r.cfg.Suite.Tests[t.ID]; ok && ov.Enabled != nil && !*ov.Enabled {
+			continue
+		}
 		if t.RequiresStream && !r.cfg.Suite.Stream.Enabled {
 			continue
 		}

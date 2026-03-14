@@ -65,6 +65,7 @@ type ModelProfile struct {
 	ReasoningEffort string                 `yaml:"reasoning_effort"`
 	Temperature     *float64               `yaml:"temperature"`
 	Extra           map[string]interface{} `yaml:"extra"`
+	Tests           map[string]TestOverride `yaml:"tests"`
 }
 
 type SuiteConfig struct {
@@ -127,6 +128,9 @@ type Toggle struct {
 }
 
 type TestOverride struct {
+	// Enabled can explicitly disable a test regardless of capability toggles.
+	Enabled *bool `yaml:"enabled"`
+
 	TimeoutSeconds int `yaml:"timeout_seconds"`
 
 	// Stream controls streaming mode for tests that optionally support it.
@@ -375,7 +379,8 @@ func (c Config) Validate() error {
 	if len(c.Models.Profiles) == 0 {
 		return errors.New("models.yaml: profiles is required")
 	}
-	for _, p := range c.Models.Profiles {
+	for i := range c.Models.Profiles {
+		p := &c.Models.Profiles[i]
 		if strings.TrimSpace(p.Name) == "" {
 			return errors.New("models.yaml: profile name is required")
 		}
@@ -387,6 +392,11 @@ func (c Config) Validate() error {
 		}
 		if p.Extra == nil {
 			p.Extra = map[string]interface{}{}
+		}
+		for testID, t := range p.Tests {
+			if err := validateTestOverride(fmt.Sprintf("models.yaml: profiles.%s.tests.%s", p.Name, testID), testID, t); err != nil {
+				return err
+			}
 		}
 	}
 	if c.Suite.Passes <= 0 {
@@ -408,34 +418,8 @@ func (c Config) Validate() error {
 		return errors.New("suite.yaml: report.snippet_limit_bytes must be >= 0")
 	}
 	for testID, t := range c.Suite.Tests {
-		if strings.TrimSpace(testID) == "" {
-			return errors.New("suite.yaml: tests: empty test id key")
-		}
-		if t.TimeoutSeconds < 0 {
-			return fmt.Errorf("suite.yaml: tests.%s.timeout_seconds must be >= 0", testID)
-		}
-		if t.StreamTimeoutSeconds < 0 {
-			return fmt.Errorf("suite.yaml: tests.%s.stream_timeout_seconds must be >= 0", testID)
-		}
-		if t.MaxOutputTokens != nil && *t.MaxOutputTokens < 0 {
-			return fmt.Errorf("suite.yaml: tests.%s.max_output_tokens must be >= 0", testID)
-		}
-		if t.MaxTokens != nil && *t.MaxTokens < 0 {
-			return fmt.Errorf("suite.yaml: tests.%s.max_tokens must be >= 0", testID)
-		}
-		if mode := strings.TrimSpace(t.ToolChoiceMode); mode != "" {
-			switch mode {
-			case "forced", "required", "auto":
-			default:
-				return fmt.Errorf("suite.yaml: tests.%s.tool_choice_mode must be one of forced|required|auto", testID)
-			}
-		}
-		if eff := strings.TrimSpace(t.ReasoningEffort); eff != "" {
-			switch eff {
-			case "minimal", "low", "medium", "high", "omit":
-			default:
-				return fmt.Errorf("suite.yaml: tests.%s.reasoning_effort must be one of minimal|low|medium|high|omit", testID)
-			}
+		if err := validateTestOverride(fmt.Sprintf("suite.yaml: tests.%s", testID), testID, t); err != nil {
+			return err
 		}
 	}
 	for _, p := range c.Suite.Analysis.Percentiles {
@@ -445,6 +429,39 @@ func (c Config) Validate() error {
 	}
 	if err := c.Clients.Validate(); err != nil {
 		return err
+	}
+	return nil
+}
+
+func validateTestOverride(scope, testID string, t TestOverride) error {
+	if strings.TrimSpace(testID) == "" {
+		return fmt.Errorf("%s: empty test id key", scope)
+	}
+	if t.TimeoutSeconds < 0 {
+		return fmt.Errorf("%s.timeout_seconds must be >= 0", scope)
+	}
+	if t.StreamTimeoutSeconds < 0 {
+		return fmt.Errorf("%s.stream_timeout_seconds must be >= 0", scope)
+	}
+	if t.MaxOutputTokens != nil && *t.MaxOutputTokens < 0 {
+		return fmt.Errorf("%s.max_output_tokens must be >= 0", scope)
+	}
+	if t.MaxTokens != nil && *t.MaxTokens < 0 {
+		return fmt.Errorf("%s.max_tokens must be >= 0", scope)
+	}
+	if mode := strings.TrimSpace(t.ToolChoiceMode); mode != "" {
+		switch mode {
+		case "forced", "required", "auto":
+		default:
+			return fmt.Errorf("%s.tool_choice_mode must be one of forced|required|auto", scope)
+		}
+	}
+	if eff := strings.TrimSpace(t.ReasoningEffort); eff != "" {
+		switch eff {
+		case "minimal", "low", "medium", "high", "omit":
+		default:
+			return fmt.Errorf("%s.reasoning_effort must be one of minimal|low|medium|high|omit", scope)
+		}
 	}
 	return nil
 }

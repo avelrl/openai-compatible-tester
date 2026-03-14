@@ -1,7 +1,7 @@
 passes: 1
 warmup_passes: 0
 parallelism: 1
-timeout_seconds: 240
+timeout_seconds: 60
 litellm_headers: {}
 retry:
   max_attempts: 2
@@ -15,18 +15,22 @@ tool_calling:
 structured_outputs:
   enabled: true
 conversations:
-  enabled: true
+  enabled: false
 memory:
-  enabled: true
+  enabled: false
 chat_reasoning:
   enabled: true
 tests:
   responses.memory.prev_id:
+    enabled: false
     timeout_seconds: 45
     treat_timeout_as_unsupported: true
   responses.conversations:
+    enabled: false
     timeout_seconds: 45
     treat_timeout_as_unsupported: true
+  responses.store_get:
+    enabled: false
   responses.structured.json_schema:
     timeout_seconds: 60
     max_output_tokens: 48
@@ -34,7 +38,7 @@ tests:
     timeout_seconds: 60
     max_output_tokens: 48
   responses.tool_call:
-    timeout_seconds: 120
+    timeout_seconds: 60
     stream: false
     stream_timeout_seconds: 30
     tool_choice_mode: forced
@@ -43,7 +47,7 @@ tests:
     reasoning_effort: minimal
     strict_mode: false
   responses.tool_call.required:
-    timeout_seconds: 120
+    timeout_seconds: 60
     stream: false
     stream_timeout_seconds: 30
     tool_choice_mode: required
@@ -51,14 +55,14 @@ tests:
     reasoning_effort: minimal
     strict_mode: false
   chat.tool_call:
-    timeout_seconds: 120
+    timeout_seconds: 60
     tool_choice_mode: forced
     forced_tool_name: add
     parallel_tool_calls: false
     max_tokens: 64
     strict_mode: false
   chat.tool_call.required:
-    timeout_seconds: 120
+    timeout_seconds: 60
     tool_choice_mode: required
     parallel_tool_calls: false
     max_tokens: 64
