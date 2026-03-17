@@ -1,10 +1,16 @@
 package tests
 
 import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/avelrl/openai-compatible-tester/internal/config"
+	"github.com/avelrl/openai-compatible-tester/internal/httpclient"
 )
 
 func TestIsUnknownParam(t *testing.T) {
@@ -26,6 +32,7 @@ func TestIsUnsupportedFeature(t *testing.T) {
 		`{"error":"Invalid tool_choice type: 'object'. Supported string values: none, auto, required"}`,
 		`{"error":{"message":"Expected 'none' | 'auto' | 'required', received object"}}`,
 		`{"error":"'response_format.type' must be 'json_schema' or 'text'"}`,
+		`{"error":"Input should be 'text' or 'json_object'"}`,
 		`{"error":{"code":"invalid_prompt","message":"Invalid Responses API request"},"metadata":{"raw":"[{\"path\":[\"store\"],\"message\":\"Invalid input: expected false\"}]"}}`,
 	}
 	for _, body := range tests {
@@ -74,6 +81,36 @@ func TestErrorMessageRateLimitHint(t *testing.T) {
 	}
 }
 
+func TestFailHTTPStatusResultAppendsRelevantHeaders(t *testing.T) {
+	result := Result{
+		TraceSteps:   []TraceStep{{Name: "main", Response: "SSE:\n\nTEXT:\n"}},
+		snippetLimit: 4096,
+	}
+	resp := &httpclient.StreamResult{
+		Response: httpclient.Response{
+			StatusCode: http.StatusTooManyRequests,
+			Headers: http.Header{
+				"Retry-After":           []string{"12"},
+				"X-RateLimit-Remaining": []string{"0"},
+			},
+		},
+	}
+
+	got := failHTTPStatusResult(result, resp)
+	if !strings.Contains(got.ErrorMessage, "retry in ~12s") {
+		t.Fatalf("missing retry hint in error message: %q", got.ErrorMessage)
+	}
+	if len(got.TraceSteps) != 1 {
+		t.Fatalf("expected one trace step, got %d", len(got.TraceSteps))
+	}
+	if !strings.Contains(got.TraceSteps[0].Response, "HEADERS:") {
+		t.Fatalf("missing headers in trace: %q", got.TraceSteps[0].Response)
+	}
+	if !strings.Contains(got.TraceSteps[0].Response, "Retry-After: 12") {
+		t.Fatalf("missing Retry-After header in trace: %q", got.TraceSteps[0].Response)
+	}
+}
+
 func TestWrappedUpstreamStatus(t *testing.T) {
 	body := []byte(`{"error":{"message":"litellm.APIConnectionError: validation error input_value={'error': {'message': 'Find response', 'code': 404}}"}}`)
 	if got := wrappedUpstreamStatus(body, 500); got != 404 {
@@ -90,6 +127,13 @@ func TestParseChatStreamEvent(t *testing.T) {
 	if delta != "Hi" || done {
 		t.Fatalf("delta=%q done=%v", delta, done)
 	}
+
+	data = `{"choices":[{"delta":{"content":"\nE\nL\nL\nO"},"finish_reason":"stop"}]}`
+	delta, done = parseChatStreamEvent(data)
+	if delta != "\nE\nL\nL\nO" || !done {
+		t.Fatalf("final delta=%q done=%v", delta, done)
+	}
+
 	_, done = parseChatStreamEvent("[DONE]")
 	if !done {
 		t.Fatalf("expected done")
@@ -282,9 +326,10 @@ func TestTestOverrideForProfileMergesSuiteDefaults(t *testing.T) {
 		Suite: config.SuiteConfig{
 			Tests: map[string]config.TestOverride{
 				"chat.tool_call": {
-					TimeoutSeconds: 60,
-					MaxTokens:      &v96,
-					LiteLLMHeaders: map[string]string{"x-litellm-timeout": "60"},
+					TimeoutSeconds:  60,
+					MaxTokens:       &v96,
+					InstructionRole: "developer",
+					LiteLLMHeaders:  map[string]string{"x-litellm-timeout": "60"},
 				},
 			},
 		},
@@ -295,6 +340,7 @@ func TestTestOverrideForProfileMergesSuiteDefaults(t *testing.T) {
 			"chat.tool_call.required": {
 				TimeoutSeconds:  45,
 				ReasoningEffort: "omit",
+				InstructionRole: "system",
 			},
 		},
 	}
@@ -315,8 +361,71 @@ func TestTestOverrideForProfileMergesSuiteDefaults(t *testing.T) {
 	if got.ReasoningEffort != "omit" {
 		t.Fatalf("reasoning=%q, want omit", got.ReasoningEffort)
 	}
+	if got.InstructionRole != "system" {
+		t.Fatalf("instruction_role=%q, want system", got.InstructionRole)
+	}
 	if got.LiteLLMHeaders["x-litellm-timeout"] != "60" {
 		t.Fatalf("expected inherited header, got %q", got.LiteLLMHeaders["x-litellm-timeout"])
+	}
+}
+
+func TestEffectiveInstructionRole(t *testing.T) {
+	cfg := config.Config{
+		Suite: config.SuiteConfig{
+			Tests: map[string]config.TestOverride{
+				"chat.basic": {InstructionRole: "system"},
+			},
+		},
+	}
+	profile := config.ModelProfile{
+		Tests: map[string]config.TestOverride{
+			"chat.stream": {InstructionRole: "user"},
+		},
+	}
+
+	if got := effectiveInstructionRole(cfg, profile, "chat.basic", "developer"); got != "system" {
+		t.Fatalf("chat.basic role=%q", got)
+	}
+	if got := effectiveInstructionRole(cfg, profile, "chat.stream", "developer"); got != "user" {
+		t.Fatalf("chat.stream role=%q", got)
+	}
+	if got := effectiveInstructionRole(cfg, profile, "chat.structured.json_schema", "system"); got != "system" {
+		t.Fatalf("default role=%q", got)
+	}
+}
+
+func TestResponsesInputWithOptionalInstructionPreservesFallback(t *testing.T) {
+	got := responsesInputWithOptionalInstruction(config.Config{}, config.ModelProfile{}, "responses.basic", "", "Reply with exactly OK", "ping", "ping: answer with OK")
+	raw, ok := got.(string)
+	if !ok {
+		t.Fatalf("expected string fallback, got %T", got)
+	}
+	if raw != "ping: answer with OK" {
+		t.Fatalf("fallback=%q", raw)
+	}
+}
+
+func TestResponsesInputWithOptionalInstructionUsesConfiguredRole(t *testing.T) {
+	cfg := config.Config{
+		Suite: config.SuiteConfig{
+			Tests: map[string]config.TestOverride{
+				"responses.basic": {InstructionRole: "system"},
+			},
+		},
+	}
+	got := responsesInputWithOptionalInstruction(cfg, config.ModelProfile{}, "responses.basic", "", "Reply with exactly OK", "ping", "ping: answer with OK")
+	items, ok := got.([]map[string]string)
+	if !ok {
+		t.Fatalf("expected message input, got %T", got)
+	}
+	if len(items) != 2 {
+		t.Fatalf("len(items)=%d", len(items))
+	}
+	if items[0]["role"] != "system" || items[0]["content"] != "Reply with exactly OK" {
+		t.Fatalf("instruction item=%v", items[0])
+	}
+	if items[1]["role"] != "user" || items[1]["content"] != "ping" {
+		t.Fatalf("user item=%v", items[1])
 	}
 }
 
@@ -441,4 +550,479 @@ func TestEffectiveTraceStepsFallsBackToMainSnippet(t *testing.T) {
 	if steps[0].Name != "main" || steps[0].Request != "req" || steps[0].Response != "resp" {
 		t.Fatalf("unexpected fallback step: %+v", steps[0])
 	}
+}
+
+func TestRunChatStreamAppliesReasoningOverride(t *testing.T) {
+	var gotBody map[string]interface{}
+	cfg := config.Config{
+		BaseURL: "https://example.test",
+		Endpoints: config.EndpointsConfig{
+			Paths: config.EndpointsPaths{
+				Chat: "/v1/chat/completions",
+			},
+		},
+		Suite: config.SuiteConfig{
+			ChatReasoning: config.Toggle{Enabled: true},
+			Report:        config.ReportConfig{SnippetLimitBytes: 4096},
+		},
+	}
+	profile := config.ModelProfile{
+		Name:            "nvidia-deepseek-3.2",
+		ChatModel:       "deepseek-ai/deepseek-v3.2",
+		ResponsesModel:  "deepseek-ai/deepseek-v3.2",
+		ReasoningEffort: "minimal",
+		Tests: map[string]config.TestOverride{
+			"chat.stream": {
+				InstructionRole: "system",
+				ReasoningEffort: "omit",
+				MaxTokens:       intPtr(8),
+			},
+		},
+	}
+	client := httpclient.NewWithHTTPClient(
+		cfg.BaseURL,
+		"",
+		nil,
+		httpclient.BuildRetryConfig(1, 0, nil),
+		&http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				defer r.Body.Close()
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatalf("read body: %v", err)
+				}
+				if err := json.Unmarshal(body, &gotBody); err != nil {
+					t.Fatalf("unmarshal body: %v", err)
+				}
+				return stringResponse(http.StatusOK, "text/event-stream", "data: {\"choices\":[{\"delta\":{\"content\":\"HELLO\"},\"finish_reason\":\"stop\"}]}\n\n"), nil
+			}),
+		},
+	)
+
+	res := runChatStream(context.Background(), RunContext{
+		Client:  client,
+		Config:  cfg,
+		Profile: profile,
+	})
+	if res.Status != StatusPass {
+		t.Fatalf("status=%s error=%s", res.Status, res.ErrorMessage)
+	}
+	if _, ok := gotBody["reasoning"]; ok {
+		t.Fatalf("expected reasoning to be omitted, got request body %v", gotBody["reasoning"])
+	}
+	if got, ok := gotBody["max_tokens"].(float64); !ok || got != 8 {
+		t.Fatalf("max_tokens=%v, want 8", gotBody["max_tokens"])
+	}
+}
+
+func TestRunChatBasicAppliesOverrides(t *testing.T) {
+	var gotBody map[string]interface{}
+	cfg := config.Config{
+		BaseURL: "https://example.test",
+		Endpoints: config.EndpointsConfig{
+			Paths: config.EndpointsPaths{
+				Chat: "/v1/chat/completions",
+			},
+		},
+		Suite: config.SuiteConfig{
+			ChatReasoning: config.Toggle{Enabled: true},
+			Report:        config.ReportConfig{SnippetLimitBytes: 4096},
+		},
+	}
+	profile := config.ModelProfile{
+		Name:            "p",
+		ChatModel:       "m",
+		ResponsesModel:  "m",
+		ReasoningEffort: "minimal",
+		Tests: map[string]config.TestOverride{
+			"chat.basic": {
+				InstructionRole: "system",
+				ReasoningEffort: "omit",
+			},
+		},
+	}
+	client := httpclient.NewWithHTTPClient(
+		cfg.BaseURL,
+		"",
+		nil,
+		httpclient.BuildRetryConfig(1, 0, nil),
+		&http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				defer r.Body.Close()
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatalf("read body: %v", err)
+				}
+				if err := json.Unmarshal(body, &gotBody); err != nil {
+					t.Fatalf("unmarshal body: %v", err)
+				}
+				return jsonResponse(http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}]}`), nil
+			}),
+		},
+	)
+
+	res := runChatBasic(context.Background(), RunContext{Client: client, Config: cfg, Profile: profile})
+	if res.Status != StatusPass {
+		t.Fatalf("status=%s error=%s", res.Status, res.ErrorMessage)
+	}
+	if _, ok := gotBody["reasoning"]; ok {
+		t.Fatalf("expected reasoning to be omitted, got %v", gotBody["reasoning"])
+	}
+	msgs, ok := gotBody["messages"].([]interface{})
+	if !ok || len(msgs) < 1 {
+		t.Fatalf("messages=%T %v", gotBody["messages"], gotBody["messages"])
+	}
+	first, ok := msgs[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("first message=%T", msgs[0])
+	}
+	if got := first["role"]; got != "system" {
+		t.Fatalf("role=%v, want system", got)
+	}
+}
+
+func TestRunResponsesBasicAppliesOverrides(t *testing.T) {
+	var gotBody map[string]interface{}
+	cfg := config.Config{
+		BaseURL: "https://example.test",
+		Endpoints: config.EndpointsConfig{
+			Paths: config.EndpointsPaths{
+				Responses: "/v1/responses",
+			},
+		},
+		Suite: config.SuiteConfig{
+			Report: config.ReportConfig{SnippetLimitBytes: 4096},
+		},
+	}
+	profile := config.ModelProfile{
+		Name:            "p",
+		ChatModel:       "m",
+		ResponsesModel:  "m",
+		ReasoningEffort: "minimal",
+		Tests: map[string]config.TestOverride{
+			"responses.basic": {
+				InstructionRole: "system",
+				ReasoningEffort: "omit",
+			},
+		},
+	}
+	client := httpclient.NewWithHTTPClient(
+		cfg.BaseURL,
+		"",
+		nil,
+		httpclient.BuildRetryConfig(1, 0, nil),
+		&http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				defer r.Body.Close()
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatalf("read body: %v", err)
+				}
+				if err := json.Unmarshal(body, &gotBody); err != nil {
+					t.Fatalf("unmarshal body: %v", err)
+				}
+				return jsonResponse(http.StatusOK, `{"output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}`), nil
+			}),
+		},
+	)
+
+	res := runResponsesBasic(context.Background(), RunContext{Client: client, Config: cfg, Profile: profile})
+	if res.Status != StatusPass {
+		t.Fatalf("status=%s error=%s", res.Status, res.ErrorMessage)
+	}
+	if _, ok := gotBody["reasoning"]; ok {
+		t.Fatalf("expected reasoning to be omitted, got %v", gotBody["reasoning"])
+	}
+	input, ok := gotBody["input"].([]interface{})
+	if !ok || len(input) < 1 {
+		t.Fatalf("input=%T %v", gotBody["input"], gotBody["input"])
+	}
+	first, ok := input[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("first input=%T", input[0])
+	}
+	if got := first["role"]; got != "system" {
+		t.Fatalf("role=%v, want system", got)
+	}
+}
+
+func TestRunResponsesStreamAppliesOverrides(t *testing.T) {
+	var gotBody map[string]interface{}
+	cfg := config.Config{
+		BaseURL: "https://example.test",
+		Endpoints: config.EndpointsConfig{
+			Paths: config.EndpointsPaths{
+				Responses: "/v1/responses",
+			},
+		},
+		Suite: config.SuiteConfig{
+			Report: config.ReportConfig{SnippetLimitBytes: 4096},
+		},
+	}
+	profile := config.ModelProfile{
+		Name:            "p",
+		ChatModel:       "m",
+		ResponsesModel:  "m",
+		ReasoningEffort: "minimal",
+		Tests: map[string]config.TestOverride{
+			"responses.stream": {
+				InstructionRole: "user",
+				ReasoningEffort: "omit",
+				MaxOutputTokens: intPtr(8),
+			},
+		},
+	}
+	client := httpclient.NewWithHTTPClient(
+		cfg.BaseURL,
+		"",
+		nil,
+		httpclient.BuildRetryConfig(1, 0, nil),
+		&http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				defer r.Body.Close()
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatalf("read body: %v", err)
+				}
+				if err := json.Unmarshal(body, &gotBody); err != nil {
+					t.Fatalf("unmarshal body: %v", err)
+				}
+				return stringResponse(http.StatusOK, "text/event-stream", "data: {\"type\":\"response.output_text.delta\",\"delta\":\"HELLO\"}\n\n"), nil
+			}),
+		},
+	)
+
+	res := runResponsesStream(context.Background(), RunContext{Client: client, Config: cfg, Profile: profile})
+	if res.Status != StatusPass {
+		t.Fatalf("status=%s error=%s", res.Status, res.ErrorMessage)
+	}
+	if _, ok := gotBody["reasoning"]; ok {
+		t.Fatalf("expected reasoning to be omitted, got %v", gotBody["reasoning"])
+	}
+	if got, ok := gotBody["max_output_tokens"].(float64); !ok || got != 8 {
+		t.Fatalf("max_output_tokens=%v, want 8", gotBody["max_output_tokens"])
+	}
+	input, ok := gotBody["input"].([]interface{})
+	if !ok || len(input) < 1 {
+		t.Fatalf("input=%T %v", gotBody["input"], gotBody["input"])
+	}
+	first, ok := input[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("first input=%T", input[0])
+	}
+	if got := first["role"]; got != "user" {
+		t.Fatalf("role=%v, want user", got)
+	}
+}
+
+func TestRunChatToolCallAppliesOverrides(t *testing.T) {
+	var bodies []map[string]interface{}
+	cfg := config.Config{
+		BaseURL: "https://example.test",
+		Endpoints: config.EndpointsConfig{
+			Paths: config.EndpointsPaths{
+				Chat: "/v1/chat/completions",
+			},
+		},
+		Suite: config.SuiteConfig{
+			ChatReasoning: config.Toggle{Enabled: true},
+			Report:        config.ReportConfig{SnippetLimitBytes: 4096},
+		},
+	}
+	profile := config.ModelProfile{
+		Name:            "p",
+		ChatModel:       "m",
+		ResponsesModel:  "m",
+		ReasoningEffort: "minimal",
+		Tests: map[string]config.TestOverride{
+			"chat.tool_call": {
+				ToolChoiceMode:    "forced",
+				ForcedToolName:    "sum",
+				ParallelToolCalls: boolPtr(true),
+				ReasoningEffort:   "omit",
+				MaxTokens:         intPtr(12),
+				StrictMode:        boolPtr(true),
+			},
+		},
+	}
+	client := httpclient.NewWithHTTPClient(
+		cfg.BaseURL,
+		"",
+		nil,
+		httpclient.BuildRetryConfig(1, 0, nil),
+		&http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				defer r.Body.Close()
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatalf("read body: %v", err)
+				}
+				var parsed map[string]interface{}
+				if err := json.Unmarshal(body, &parsed); err != nil {
+					t.Fatalf("unmarshal body: %v", err)
+				}
+				bodies = append(bodies, parsed)
+				switch len(bodies) {
+				case 1:
+					return jsonResponse(http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"sum","arguments":"{\"a\":40,\"b\":2}"}}]},"finish_reason":"tool_calls"}]}`), nil
+				case 2:
+					return jsonResponse(http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"42"},"finish_reason":"stop"}]}`), nil
+				default:
+					t.Fatalf("unexpected request count: %d", len(bodies))
+					return nil, nil
+				}
+			}),
+		},
+	)
+
+	res := runChatToolCall(context.Background(), RunContext{Client: client, Config: cfg, Profile: profile})
+	if res.Status != StatusPass {
+		t.Fatalf("status=%s error=%s", res.Status, res.ErrorMessage)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("expected 2 requests, got %d", len(bodies))
+	}
+	first := bodies[0]
+	if _, ok := first["reasoning"]; ok {
+		t.Fatalf("expected reasoning to be omitted in step1, got %v", first["reasoning"])
+	}
+	if got, ok := first["max_tokens"].(float64); !ok || got != 12 {
+		t.Fatalf("max_tokens step1=%v, want 12", first["max_tokens"])
+	}
+	if got, ok := first["parallel_tool_calls"].(bool); !ok || !got {
+		t.Fatalf("parallel_tool_calls step1=%v, want true", first["parallel_tool_calls"])
+	}
+	toolChoice, ok := first["tool_choice"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("tool_choice=%T", first["tool_choice"])
+	}
+	function, ok := toolChoice["function"].(map[string]interface{})
+	if !ok || function["name"] != "sum" {
+		t.Fatalf("tool_choice.function=%v", toolChoice["function"])
+	}
+	tools, ok := first["tools"].([]interface{})
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools=%T %v", first["tools"], first["tools"])
+	}
+	tool, ok := tools[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("tool=%T", tools[0])
+	}
+	fn, ok := tool["function"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("tool.function=%T", tool["function"])
+	}
+	if got := fn["name"]; got != "sum" {
+		t.Fatalf("tool function name=%v", got)
+	}
+	if got := fn["strict"]; got != true {
+		t.Fatalf("strict=%v, want true", got)
+	}
+
+	second := bodies[1]
+	if _, ok := second["reasoning"]; ok {
+		t.Fatalf("expected reasoning to be omitted in step2, got %v", second["reasoning"])
+	}
+	if got, ok := second["max_tokens"].(float64); !ok || got != 12 {
+		t.Fatalf("max_tokens step2=%v, want 12", second["max_tokens"])
+	}
+}
+
+func TestRunChatToolCallOmitsStrictByDefault(t *testing.T) {
+	var firstBody map[string]interface{}
+	cfg := config.Config{
+		BaseURL: "https://example.test",
+		Endpoints: config.EndpointsConfig{
+			Paths: config.EndpointsPaths{
+				Chat: "/v1/chat/completions",
+			},
+		},
+		Suite: config.SuiteConfig{
+			ChatReasoning: config.Toggle{Enabled: true},
+			Report:        config.ReportConfig{SnippetLimitBytes: 4096},
+		},
+	}
+	profile := config.ModelProfile{
+		Name:           "p",
+		ChatModel:      "m",
+		ResponsesModel: "m",
+	}
+	client := httpclient.NewWithHTTPClient(
+		cfg.BaseURL,
+		"",
+		nil,
+		httpclient.BuildRetryConfig(1, 0, nil),
+		&http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				defer r.Body.Close()
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatalf("read body: %v", err)
+				}
+				if firstBody == nil {
+					if err := json.Unmarshal(body, &firstBody); err != nil {
+						t.Fatalf("unmarshal body: %v", err)
+					}
+					return jsonResponse(http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"add","arguments":"{\"a\":40,\"b\":2}"}}]},"finish_reason":"tool_calls"}]}`), nil
+				}
+				return jsonResponse(http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"42"},"finish_reason":"stop"}]}`), nil
+			}),
+		},
+	)
+
+	res := runChatToolCall(context.Background(), RunContext{Client: client, Config: cfg, Profile: profile})
+	if res.Status != StatusPass {
+		t.Fatalf("status=%s error=%s", res.Status, res.ErrorMessage)
+	}
+	tools, ok := firstBody["tools"].([]interface{})
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools=%T %v", firstBody["tools"], firstBody["tools"])
+	}
+	tool, ok := tools[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("tool=%T", tools[0])
+	}
+	fn, ok := tool["function"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("tool.function=%T", tool["function"])
+	}
+	if _, ok := fn["strict"]; ok {
+		t.Fatalf("did not expect strict to be serialized when false")
+	}
+}
+
+func intPtr(v int) *int {
+	return &v
+}
+
+func boolPtr(v bool) *bool {
+	return &v
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func jsonResponse(status int, body string) *http.Response {
+	return stringResponse(status, "application/json", body)
+}
+
+func stringResponse(status int, contentType, body string) *http.Response {
+	resp := &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+	if contentType != "" {
+		resp.Header.Set("Content-Type", contentType)
+	}
+	return resp
 }

@@ -184,6 +184,7 @@ tests:
     timeout_seconds: 180
     litellm_headers:
       x-litellm-timeout: 180
+    instruction_role: system # developer|system|user
     tool_choice_mode: forced
     forced_tool_name: add
     parallel_tool_calls: false
@@ -193,6 +194,13 @@ tests:
 
 Notes:
 - `litellm_headers` are injected into HTTP requests (suite-level `litellm_headers` + per-test overrides).
+- `instruction_role` lets you switch the leading instruction message role for chat/response tests that separate instruction from user input.
+  Useful when a provider ignores `developer` but follows `system`. For `responses.basic` / `responses.store_get`, the legacy plain-string
+  input is preserved unless you explicitly set `instruction_role`.
+- `retry.rate_limit_max_attempts` and `retry.rate_limit_fallback_ms` let you tune 429 handling separately from generic 5xx/network retries.
+  If the provider does not send `Retry-After`/`RateLimit-Reset`, the client waits `rate_limit_fallback_ms` before the next 429 retry.
+- `rate_limit_per_minute` is a per-profile knob in `models.yaml`. It throttles actual HTTP requests for that profile before they hit the provider,
+  which is useful for providers with published RPM caps such as NVIDIA-hosted models.
 - `responses.tool_call.stream=true` enables SSE mode for step-1 and sets `x-litellm-stream-timeout`
   (default 30s; configurable via `stream_timeout_seconds` or directly via headers).
 - `responses.tool_call.max_output_tokens` is optional. Some LiteLLM/vLLM backends reject this field;

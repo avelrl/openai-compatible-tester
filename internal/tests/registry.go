@@ -274,6 +274,60 @@ func baseChatPayload(profile config.ModelProfile, suite config.SuiteConfig) map[
 	return payload
 }
 
+func normalizeInstructionRole(role string) string {
+	return strings.ToLower(strings.TrimSpace(role))
+}
+
+func effectiveInstructionRole(cfg config.Config, profile config.ModelProfile, testID, defaultRole string) string {
+	if ov, ok := testOverrideForProfile(cfg, profile, testID); ok {
+		if role := normalizeInstructionRole(ov.InstructionRole); role != "" {
+			return role
+		}
+	}
+	return normalizeInstructionRole(defaultRole)
+}
+
+func chatInstructionMessage(cfg config.Config, profile config.ModelProfile, testID, defaultRole, content string) map[string]string {
+	return map[string]string{
+		"role":    effectiveInstructionRole(cfg, profile, testID, defaultRole),
+		"content": content,
+	}
+}
+
+func responsesInputWithOptionalInstruction(cfg config.Config, profile config.ModelProfile, testID, defaultRole, instruction, user, plainFallback string) interface{} {
+	role := effectiveInstructionRole(cfg, profile, testID, defaultRole)
+	if role == "" {
+		return plainFallback
+	}
+	input := []map[string]string{{
+		"role":    role,
+		"content": instruction,
+	}}
+	if strings.TrimSpace(user) != "" {
+		input = append(input, map[string]string{
+			"role":    "user",
+			"content": user,
+		})
+	}
+	return input
+}
+
+func responsesInstructionInput(cfg config.Config, profile config.ModelProfile, testID, defaultRole, instruction, user string) []map[string]string {
+	role := effectiveInstructionRole(cfg, profile, testID, defaultRole)
+	return []map[string]string{
+		{"role": role, "content": instruction},
+		{"role": "user", "content": user},
+	}
+}
+
+func responsesConversationInstructionItem(cfg config.Config, profile config.ModelProfile, testID, defaultRole, content string) map[string]string {
+	return map[string]string{
+		"type":    "message",
+		"role":    effectiveInstructionRole(cfg, profile, testID, defaultRole),
+		"content": content,
+	}
+}
+
 func applyChatReasoningOverride(payload map[string]interface{}, effort string) {
 	effort = strings.TrimSpace(effort)
 	switch effort {
@@ -387,8 +441,10 @@ func runModelsList(ctx context.Context, rc RunContext) Result {
 func runResponsesBasic(ctx context.Context, rc RunContext) Result {
 	result := baseResult("responses.basic", "Responses basic", rc)
 	headers := requestHeadersForTest(rc.Config, rc.Profile, "responses.basic")
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "responses.basic")
 	payload := baseResponsesPayload(rc.Profile)
-	payload["input"] = "ping: answer with OK"
+	applyResponsesReasoningOverride(payload, effectiveResponsesReasoningEffort(rc.Profile, ov))
+	payload["input"] = responsesInputWithOptionalInstruction(rc.Config, rc.Profile, "responses.basic", "", "Reply with exactly OK", "ping", "ping: answer with OK")
 	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, payload, headers)
 	if err != nil {
@@ -400,8 +456,10 @@ func runResponsesBasic(ctx context.Context, rc RunContext) Result {
 func runResponsesStoreGet(ctx context.Context, rc RunContext) Result {
 	result := baseResult("responses.store_get", "Responses store + GET", rc)
 	headers := requestHeadersForTest(rc.Config, rc.Profile, "responses.store_get")
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "responses.store_get")
 	payload := baseResponsesPayload(rc.Profile)
-	payload["input"] = "Say OK and nothing else"
+	applyResponsesReasoningOverride(payload, effectiveResponsesReasoningEffort(rc.Profile, ov))
+	payload["input"] = responsesInputWithOptionalInstruction(rc.Config, rc.Profile, "responses.store_get", "", "Say OK and nothing else", "", "Say OK and nothing else")
 	payload["store"] = true
 	step1Req := prettyJSON(payload)
 	result.RequestSnippet = clip(step1Req, snippetLimit)
@@ -480,10 +538,7 @@ func runResponsesStructuredSchema(ctx context.Context, rc RunContext) Result {
 	if maxOutputTokens := effectiveResponsesMaxOutputTokens(ov); maxOutputTokens != nil {
 		payload["max_output_tokens"] = *maxOutputTokens
 	}
-	payload["input"] = []map[string]string{
-		{"role": "system", "content": "Return JSON strictly according to the schema."},
-		{"role": "user", "content": "Generate an object with status=\"ok\" and value=42."},
-	}
+	payload["input"] = responsesInstructionInput(rc.Config, rc.Profile, "responses.structured.json_schema", "system", "Return JSON strictly according to the schema.", "Generate an object with status=\"ok\" and value=42.")
 	payload["text"] = map[string]interface{}{
 		"format": map[string]interface{}{
 			"type": "json_schema",
@@ -517,10 +572,7 @@ func runResponsesStructuredObject(ctx context.Context, rc RunContext) Result {
 	if maxOutputTokens := effectiveResponsesMaxOutputTokens(ov); maxOutputTokens != nil {
 		payload["max_output_tokens"] = *maxOutputTokens
 	}
-	payload["input"] = []map[string]string{
-		{"role": "system", "content": "You output JSON only."},
-		{"role": "user", "content": "Return JSON like {\"ok\":true}."},
-	}
+	payload["input"] = responsesInstructionInput(rc.Config, rc.Profile, "responses.structured.json_object", "system", "You output JSON only.", "Return JSON like {\"ok\":true}.")
 	payload["text"] = map[string]interface{}{
 		"format": map[string]interface{}{"type": "json_object"},
 	}
@@ -598,23 +650,7 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 	} else {
 		payload["reasoning"] = map[string]interface{}{"effort": reasoningEffort}
 	}
-	payload["tools"] = []map[string]interface{}{
-		{
-			"type":        "function",
-			"name":        toolName,
-			"description": "Add two integers",
-			"parameters": map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"a": map[string]interface{}{"type": "integer"},
-					"b": map[string]interface{}{"type": "integer"},
-				},
-				"required":             []string{"a", "b"},
-				"additionalProperties": false,
-			},
-			"strict": strict,
-		},
-	}
+	payload["tools"] = []map[string]interface{}{responsesAddTool(toolName, strict)}
 	step1Prompt := fmt.Sprintf("Call %s with a=40 and b=2. Do not answer yourself.", toolName)
 	step2Prompt := "Reply with just the number."
 	payload["input"] = []map[string]string{
@@ -813,8 +849,10 @@ func runResponsesErrorShape(ctx context.Context, rc RunContext) Result {
 func runResponsesMemory(ctx context.Context, rc RunContext) Result {
 	result := baseResult("responses.memory.prev_id", "Responses memory (previous_response_id)", rc)
 	headers := requestHeadersForTest(rc.Config, rc.Profile, "responses.memory.prev_id")
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "responses.memory.prev_id")
 	payload := baseResponsesPayload(rc.Profile)
-	payload["input"] = "Remember: my code = 123. Reply OK"
+	applyResponsesReasoningOverride(payload, effectiveResponsesReasoningEffort(rc.Profile, ov))
+	payload["input"] = responsesInputWithOptionalInstruction(rc.Config, rc.Profile, "responses.memory.prev_id", "", "Remember: my code = 123. Reply OK", "", "Remember: my code = 123. Reply OK")
 	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
 	withTraceStep(&result, "remember_value", prettyJSON(payload), "")
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, payload, headers)
@@ -838,6 +876,7 @@ func runResponsesMemory(ctx context.Context, rc RunContext) Result {
 		return failResult(result, errors.New("missing id"), "schema")
 	}
 	payload2 := baseResponsesPayload(rc.Profile)
+	applyResponsesReasoningOverride(payload2, effectiveResponsesReasoningEffort(rc.Profile, ov))
 	payload2["previous_response_id"] = id
 	payload2["input"] = "What was my code? Reply with just the number."
 	result.RequestSnippet = clip(prettyJSON(payload2), snippetLimit)
@@ -861,9 +900,10 @@ func runResponsesMemory(ctx context.Context, rc RunContext) Result {
 func runResponsesConversations(ctx context.Context, rc RunContext) Result {
 	result := baseResult("responses.conversations", "Responses conversations", rc)
 	headers := requestHeadersForTest(rc.Config, rc.Profile, "responses.conversations")
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "responses.conversations")
 	payload := map[string]interface{}{
 		"items": []map[string]string{
-			{"type": "message", "role": "system", "content": "You are a test assistant."},
+			responsesConversationInstructionItem(rc.Config, rc.Profile, "responses.conversations", "system", "You are a test assistant."),
 			{"type": "message", "role": "user", "content": "Remember: code=777. Reply OK."},
 		},
 	}
@@ -896,6 +936,7 @@ func runResponsesConversations(ctx context.Context, rc RunContext) Result {
 		return failResult(result, errors.New("missing conversation id"), "schema")
 	}
 	payload2 := baseResponsesPayload(rc.Profile)
+	applyResponsesReasoningOverride(payload2, effectiveResponsesReasoningEffort(rc.Profile, ov))
 	payload2["conversation"] = convID
 	payload2["input"] = []map[string]string{{"role": "user", "content": "What is the code? Reply with just the number."}}
 	result.RequestSnippet = clip(prettyJSON(payload2), snippetLimit)
@@ -912,9 +953,11 @@ func runChatBasic(ctx context.Context, rc RunContext) Result {
 	result := baseResult("chat.basic", "Chat completions basic", rc)
 	result.Model = rc.Profile.ChatModel
 	headers := requestHeadersForTest(rc.Config, rc.Profile, "chat.basic")
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "chat.basic")
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
+	applyChatReasoningOverride(payload, effectiveChatReasoningEffort(rc.Profile, rc.Config.Suite, ov))
 	payload["messages"] = []map[string]string{
-		{"role": "developer", "content": "Reply with exactly OK"},
+		chatInstructionMessage(rc.Config, rc.Profile, "chat.basic", "developer", "Reply with exactly OK"),
 		{"role": "user", "content": "ping"},
 	}
 	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
@@ -933,12 +976,14 @@ func runChatStream(ctx context.Context, rc RunContext) Result {
 	headers["Accept"] = "text/event-stream"
 	applyStreamTimeoutHeader(headers, rc.Config, rc.Profile, "chat.stream", ov)
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
+	result.ReasoningEffort = effectiveChatReasoningEffort(rc.Profile, rc.Config.Suite, ov)
+	applyChatReasoningOverride(payload, result.ReasoningEffort)
 	if maxTokens := chatMaxTokensOverride(ov); maxTokens != nil {
 		payload["max_tokens"] = *maxTokens
 	}
 	payload["stream"] = true
 	payload["messages"] = []map[string]string{
-		{"role": "developer", "content": "Reply with exactly HELLO and nothing else. Stream it one character at a time."},
+		chatInstructionMessage(rc.Config, rc.Profile, "chat.stream", "developer", "Reply with exactly HELLO and nothing else. Stream it one character at a time."),
 		{"role": "user", "content": "go"},
 	}
 	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
@@ -1062,25 +1107,7 @@ func runChatToolCallVariant(ctx context.Context, rc RunContext, testID, name, fo
 	}
 	payload["parallel_tool_calls"] = parallel
 	payload["max_tokens"] = maxTokens
-	payload["tools"] = []map[string]interface{}{
-		{
-			"type": "function",
-			"function": map[string]interface{}{
-				"name":        toolName,
-				"description": "Add two integers",
-				"parameters": map[string]interface{}{
-					"type": "object",
-					"properties": map[string]interface{}{
-						"a": map[string]interface{}{"type": "integer"},
-						"b": map[string]interface{}{"type": "integer"},
-					},
-					"required":             []string{"a", "b"},
-					"additionalProperties": false,
-				},
-				"strict": strict,
-			},
-		},
-	}
+	payload["tools"] = []map[string]interface{}{chatAddTool(toolName, strict)}
 	payload["messages"] = []map[string]string{{"role": "user", "content": step1Prompt}}
 	step1Req := prettyJSON(payload)
 	result.RequestSnippet = clip(step1Req, snippetLimit)
@@ -1149,7 +1176,9 @@ func runChatErrorShape(ctx context.Context, rc RunContext) Result {
 	result := baseResult("chat.error_shape", "Chat error shape", rc)
 	result.Model = rc.Profile.ChatModel
 	headers := requestHeadersForTest(rc.Config, rc.Profile, "chat.error_shape")
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "chat.error_shape")
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
+	applyChatReasoningOverride(payload, effectiveChatReasoningEffort(rc.Profile, rc.Config.Suite, ov))
 	payload["messages"] = 1 // invalid messages type
 	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Chat, payload, headers)
@@ -1181,7 +1210,9 @@ func runChatMemory(ctx context.Context, rc RunContext) Result {
 	result := baseResult("chat.memory", "Chat memory", rc)
 	result.Model = rc.Profile.ChatModel
 	headers := requestHeadersForTest(rc.Config, rc.Profile, "chat.memory")
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "chat.memory")
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
+	applyChatReasoningOverride(payload, effectiveChatReasoningEffort(rc.Profile, rc.Config.Suite, ov))
 	payload["messages"] = []map[string]string{
 		{"role": "user", "content": "Remember: code=999. Reply OK"},
 		{"role": "assistant", "content": "OK"},
@@ -1206,7 +1237,7 @@ func runChatStructuredSchema(ctx context.Context, rc RunContext) Result {
 		payload["max_tokens"] = *maxTokens
 	}
 	payload["messages"] = []map[string]string{
-		{"role": "system", "content": "Return JSON strictly according to the schema."},
+		chatInstructionMessage(rc.Config, rc.Profile, "chat.structured.json_schema", "system", "Return JSON strictly according to the schema."),
 		{"role": "user", "content": "Generate an object with status=\"ok\" and value=42."},
 	}
 	payload["response_format"] = map[string]interface{}{
@@ -1244,7 +1275,7 @@ func runChatStructuredObject(ctx context.Context, rc RunContext) Result {
 		payload["max_tokens"] = *maxTokens
 	}
 	payload["messages"] = []map[string]string{
-		{"role": "system", "content": "You output JSON only."},
+		chatInstructionMessage(rc.Config, rc.Profile, "chat.structured.json_object", "system", "You output JSON only."),
 		{"role": "user", "content": "Return JSON like {\"ok\":true}."},
 	}
 	payload["response_format"] = map[string]interface{}{
@@ -1446,6 +1477,7 @@ func failHTTPStatusResult(result Result, resp interface{}) Result {
 		result.ErrorType = "http_status"
 	}
 	result.ErrorMessage = httpStatusMessage(statusCode, headers, body)
+	appendHTTPStatusDiagnostics(&result, headers)
 	return result
 }
 
@@ -1483,6 +1515,27 @@ func httpStatusMessage(statusCode int, headers http.Header, body []byte) string 
 		return fmt.Sprintf("status %d", statusCode)
 	}
 	return fmt.Sprintf("status %d: %s", statusCode, strings.Join(parts, "; "))
+}
+
+func appendHTTPStatusDiagnostics(result *Result, headers http.Header) {
+	if result == nil {
+		return
+	}
+	lines := relevantResponseHeaderLines(headers)
+	if len(lines) == 0 {
+		return
+	}
+	diag := "HEADERS:\n" + strings.Join(lines, "\n")
+	if len(result.TraceSteps) == 0 {
+		withTraceStep(result, "http_error", "", diag)
+		return
+	}
+	last := len(result.TraceSteps) - 1
+	if strings.TrimSpace(result.TraceSteps[last].Response) == "" {
+		result.TraceSteps[last].Response = clip(diag, result.snippetLimit)
+		return
+	}
+	result.TraceSteps[last].Response = clip(result.TraceSteps[last].Response+"\n\n"+diag, result.snippetLimit)
 }
 
 func containsExact(list []string, want string) bool {
@@ -1608,7 +1661,52 @@ func isUnsupportedFeature(body []byte) bool {
 		strings.Contains(msg, "expected 'none' | 'auto' | 'required'") ||
 		strings.Contains(msg, "'response_format.type' must be 'json_schema' or 'text'") ||
 		strings.Contains(msg, "\"response_format.type\" must be \"json_schema\" or \"text\"") ||
+		strings.Contains(msg, "input should be 'text' or 'json_object'") ||
 		isStoreUnsupported(body)
+}
+
+func responsesAddTool(toolName string, strict bool) map[string]interface{} {
+	tool := map[string]interface{}{
+		"type":        "function",
+		"name":        toolName,
+		"description": "Add two integers",
+		"parameters": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"a": map[string]interface{}{"type": "integer"},
+				"b": map[string]interface{}{"type": "integer"},
+			},
+			"required":             []string{"a", "b"},
+			"additionalProperties": false,
+		},
+	}
+	if strict {
+		tool["strict"] = true
+	}
+	return tool
+}
+
+func chatAddTool(toolName string, strict bool) map[string]interface{} {
+	fn := map[string]interface{}{
+		"name":        toolName,
+		"description": "Add two integers",
+		"parameters": map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"a": map[string]interface{}{"type": "integer"},
+				"b": map[string]interface{}{"type": "integer"},
+			},
+			"required":             []string{"a", "b"},
+			"additionalProperties": false,
+		},
+	}
+	if strict {
+		fn["strict"] = true
+	}
+	return map[string]interface{}{
+		"type":     "function",
+		"function": fn,
+	}
 }
 
 func isStoreUnsupported(body []byte) bool {
@@ -1701,12 +1799,44 @@ func rateLimitHint(headers http.Header, body []byte, now time.Time) string {
 			return formatRetryDelay(delay)
 		}
 	}
+	if raw := extractBodyHeaderValue(body, "RateLimit-Reset"); raw != "" {
+		if delay, ok := httpclient.RetryDelayFromHeaderValue(raw, now); ok {
+			return formatRetryDelay(delay)
+		}
+	}
 	if raw := extractBodyHeaderValue(body, "X-RateLimit-Reset"); raw != "" {
 		if delay, ok := httpclient.RetryDelayFromHeaderValue(raw, now); ok {
 			return formatRetryDelay(delay)
 		}
 	}
 	return ""
+}
+
+func relevantResponseHeaderLines(headers http.Header) []string {
+	if len(headers) == 0 {
+		return nil
+	}
+	keys := []string{
+		"Retry-After",
+		"RateLimit-Reset",
+		"RateLimit-Limit",
+		"RateLimit-Remaining",
+		"X-RateLimit-Reset",
+		"X-RateLimit-Limit",
+		"X-RateLimit-Remaining",
+		"X-RateLimit-Reset-Requests",
+		"X-RateLimit-Limit-Requests",
+		"X-RateLimit-Remaining-Requests",
+		"Request-Id",
+		"X-Request-Id",
+	}
+	lines := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if value := strings.TrimSpace(headers.Get(key)); value != "" {
+			lines = append(lines, key+": "+value)
+		}
+	}
+	return lines
 }
 
 func formatRetryDelay(delay time.Duration) string {
@@ -2170,17 +2300,15 @@ func parseChatStreamEvent(data string) (string, bool) {
 	if c0 == nil {
 		return "", false
 	}
-	if finish, ok := c0["finish_reason"].(string); ok && finish != "" {
-		return "", true
-	}
 	delta, ok := c0["delta"].(map[string]interface{})
-	if !ok {
-		return "", false
+	var content string
+	if ok {
+		content, _ = delta["content"].(string)
 	}
-	if content, ok := delta["content"].(string); ok {
-		return content, false
+	if finish, ok := c0["finish_reason"].(string); ok && finish != "" {
+		return content, true
 	}
-	return "", false
+	return content, false
 }
 
 func parseResponsesStreamEvent(data string) (string, bool) {
@@ -2243,14 +2371,12 @@ func runResponsesStream(ctx context.Context, rc RunContext) Result {
 	headers["Accept"] = "text/event-stream"
 	applyStreamTimeoutHeader(headers, rc.Config, rc.Profile, "responses.stream", ov)
 	payload := baseResponsesPayload(rc.Profile)
+	applyResponsesReasoningOverride(payload, effectiveResponsesReasoningEffort(rc.Profile, ov))
 	if maxOutputTokens := effectiveResponsesMaxOutputTokens(ov); maxOutputTokens != nil {
 		payload["max_output_tokens"] = *maxOutputTokens
 	}
 	payload["stream"] = true
-	payload["input"] = []map[string]string{
-		{"role": "system", "content": "Reply with exactly HELLO and nothing else."},
-		{"role": "user", "content": "go"},
-	}
+	payload["input"] = responsesInstructionInput(rc.Config, rc.Profile, "responses.stream", "system", "Reply with exactly HELLO and nothing else.", "go")
 	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
 	var text strings.Builder
 	var raw strings.Builder

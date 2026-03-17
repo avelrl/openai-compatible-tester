@@ -187,7 +187,7 @@ func TestLoadAcceptsProfileTestOverrides(t *testing.T) {
 	if err := os.WriteFile(suite, []byte("passes: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(models, []byte("profiles:\n  - name: kimi-tuned\n    chat_model: chat\n    responses_model: resp\n    tests:\n      chat.tool_call.required:\n        max_tokens: 128\n        reasoning_effort: omit\n"), 0o644); err != nil {
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: kimi-tuned\n    chat_model: chat\n    responses_model: resp\n    tests:\n      chat.tool_call.required:\n        max_tokens: 128\n        reasoning_effort: omit\n        instruction_role: system\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
@@ -217,5 +217,215 @@ func TestLoadAcceptsProfileTestOverrides(t *testing.T) {
 	}
 	if ov.ReasoningEffort != "omit" {
 		t.Fatalf("reasoning_effort=%q", ov.ReasoningEffort)
+	}
+	if ov.InstructionRole != "system" {
+		t.Fatalf("instruction_role=%q", ov.InstructionRole)
+	}
+	if profile.RateLimitPerMinute != 0 {
+		t.Fatalf("rate_limit_per_minute=%d, want 0 by default", profile.RateLimitPerMinute)
+	}
+}
+
+func TestLoadAcceptsProfileRateLimit(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: throttled\n    chat_model: chat\n    responses_model: resp\n    rate_limit_per_minute: 40\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=fromenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       filepath.Join(dir, ".env"),
+	})
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if got := cfg.Models.Profiles[0].RateLimitPerMinute; got != 40 {
+		t.Fatalf("rate_limit_per_minute=%d, want 40", got)
+	}
+}
+
+func TestLoadAppliesRateLimitRetryDefaultsAndOverrides(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\nretry:\n  max_attempts: 4\n  backoff_ms: 900\n  rate_limit_max_attempts: 2\n  rate_limit_fallback_ms: 5000\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: throttled\n    chat_model: chat\n    responses_model: resp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=fromenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       filepath.Join(dir, ".env"),
+	})
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if got := cfg.Suite.Retry.MaxAttempts; got != 4 {
+		t.Fatalf("max_attempts=%d, want 4", got)
+	}
+	if got := cfg.Suite.Retry.BackoffMS; got != 900 {
+		t.Fatalf("backoff_ms=%d, want 900", got)
+	}
+	if got := cfg.Suite.Retry.RateLimitMaxAttempts; got != 2 {
+		t.Fatalf("rate_limit_max_attempts=%d, want 2", got)
+	}
+	if got := cfg.Suite.Retry.RateLimitFallbackMS; got != 5000 {
+		t.Fatalf("rate_limit_fallback_ms=%d, want 5000", got)
+	}
+}
+
+func TestLoadInheritsRateLimitRetryDefaultsFromGenericRetry(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\nretry:\n  max_attempts: 2\n  backoff_ms: 700\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: throttled\n    chat_model: chat\n    responses_model: resp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=fromenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       filepath.Join(dir, ".env"),
+	})
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if got := cfg.Suite.Retry.RateLimitMaxAttempts; got != 2 {
+		t.Fatalf("rate_limit_max_attempts=%d, want inherited 2", got)
+	}
+	if got := cfg.Suite.Retry.RateLimitFallbackMS; got != 700 {
+		t.Fatalf("rate_limit_fallback_ms=%d, want inherited 700", got)
+	}
+}
+
+func TestLoadRejectsInvalidInstructionRole(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: bad\n    chat_model: chat\n    responses_model: resp\n    tests:\n      chat.basic:\n        instruction_role: assistant\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=fromenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       filepath.Join(dir, ".env"),
+	})
+	if err == nil {
+		t.Fatal("expected invalid instruction_role error")
+	}
+	if !strings.Contains(err.Error(), "instruction_role") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsNegativeProfileRateLimit(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: bad\n    chat_model: chat\n    responses_model: resp\n    rate_limit_per_minute: -1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=fromenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       filepath.Join(dir, ".env"),
+	})
+	if err == nil {
+		t.Fatal("expected invalid rate_limit_per_minute error")
+	}
+	if !strings.Contains(err.Error(), "rate_limit_per_minute") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidRateLimitRetryConfig(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\nretry:\n  rate_limit_max_attempts: -1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: bad\n    chat_model: chat\n    responses_model: resp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=fromenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       filepath.Join(dir, ".env"),
+	})
+	if err == nil {
+		t.Fatal("expected invalid rate limit retry config error")
+	}
+	if !strings.Contains(err.Error(), "rate_limit_max_attempts") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

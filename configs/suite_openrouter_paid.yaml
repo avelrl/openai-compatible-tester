@@ -6,6 +6,8 @@ litellm_headers: {}
 retry:
   max_attempts: 2
   backoff_ms: 250
+  rate_limit_max_attempts: 2
+  rate_limit_fallback_ms: 5000
   retry_on_status: [429, 500, 502, 503, 504]
   test_retries: 0
 stream:

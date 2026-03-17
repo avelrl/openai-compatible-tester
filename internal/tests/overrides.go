@@ -41,6 +41,9 @@ func mergeTestOverride(base, overlay config.TestOverride) config.TestOverride {
 			merged.LiteLLMHeaders[k] = v
 		}
 	}
+	if v := strings.TrimSpace(overlay.InstructionRole); v != "" {
+		merged.InstructionRole = v
+	}
 	if v := strings.TrimSpace(overlay.ToolChoiceMode); v != "" {
 		merged.ToolChoiceMode = v
 	}

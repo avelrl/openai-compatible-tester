@@ -59,13 +59,14 @@ type ModelsConfig struct {
 }
 
 type ModelProfile struct {
-	Name            string                  `yaml:"name"`
-	ChatModel       string                  `yaml:"chat_model"`
-	ResponsesModel  string                  `yaml:"responses_model"`
-	ReasoningEffort string                  `yaml:"reasoning_effort"`
-	Temperature     *float64                `yaml:"temperature"`
-	Extra           map[string]interface{}  `yaml:"extra"`
-	Tests           map[string]TestOverride `yaml:"tests"`
+	Name               string                  `yaml:"name"`
+	ChatModel          string                  `yaml:"chat_model"`
+	ResponsesModel     string                  `yaml:"responses_model"`
+	ReasoningEffort    string                  `yaml:"reasoning_effort"`
+	Temperature        *float64                `yaml:"temperature"`
+	RateLimitPerMinute int                     `yaml:"rate_limit_per_minute"`
+	Extra              map[string]interface{}  `yaml:"extra"`
+	Tests              map[string]TestOverride `yaml:"tests"`
 }
 
 type SuiteConfig struct {
@@ -117,10 +118,12 @@ type ReportConfig struct {
 }
 
 type RetryConfig struct {
-	MaxAttempts   int   `yaml:"max_attempts"`
-	BackoffMS     int   `yaml:"backoff_ms"`
-	RetryOnStatus []int `yaml:"retry_on_status"`
-	TestRetries   int   `yaml:"test_retries"`
+	MaxAttempts          int   `yaml:"max_attempts"`
+	BackoffMS            int   `yaml:"backoff_ms"`
+	RetryOnStatus        []int `yaml:"retry_on_status"`
+	TestRetries          int   `yaml:"test_retries"`
+	RateLimitMaxAttempts int   `yaml:"rate_limit_max_attempts"`
+	RateLimitFallbackMS  int   `yaml:"rate_limit_fallback_ms"`
 }
 
 type Toggle struct {
@@ -139,6 +142,10 @@ type TestOverride struct {
 
 	// LiteLLM-specific request headers (merged with suite-level LiteLLMHeaders).
 	LiteLLMHeaders map[string]string `yaml:"litellm_headers"`
+
+	// InstructionRole overrides the role used for the leading instruction message
+	// in chat tests that separate instruction from user input.
+	InstructionRole string `yaml:"instruction_role"` // developer|system|user
 
 	// Tool calling knobs (used by tool_call tests).
 	ToolChoiceMode    string `yaml:"tool_choice_mode"` // forced|required|auto
@@ -341,6 +348,12 @@ func applyDefaults(cfg *Config) {
 	if cfg.Suite.Retry.BackoffMS == 0 {
 		cfg.Suite.Retry.BackoffMS = 250
 	}
+	if cfg.Suite.Retry.RateLimitMaxAttempts == 0 {
+		cfg.Suite.Retry.RateLimitMaxAttempts = cfg.Suite.Retry.MaxAttempts
+	}
+	if cfg.Suite.Retry.RateLimitFallbackMS == 0 {
+		cfg.Suite.Retry.RateLimitFallbackMS = cfg.Suite.Retry.BackoffMS
+	}
 	if cfg.Suite.Retry.TestRetries < 0 {
 		cfg.Suite.Retry.TestRetries = 0
 	}
@@ -390,6 +403,9 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(p.ResponsesModel) == "" {
 			return fmt.Errorf("models.yaml: responses_model required for profile %s", p.Name)
 		}
+		if p.RateLimitPerMinute < 0 {
+			return fmt.Errorf("models.yaml: rate_limit_per_minute must be >= 0 for profile %s", p.Name)
+		}
 		if p.Extra == nil {
 			p.Extra = map[string]interface{}{}
 		}
@@ -410,6 +426,18 @@ func (c Config) Validate() error {
 	}
 	if c.Suite.TimeoutSeconds <= 0 {
 		return errors.New("suite.yaml: timeout_seconds must be > 0")
+	}
+	if c.Suite.Retry.MaxAttempts <= 0 {
+		return errors.New("suite.yaml: retry.max_attempts must be > 0")
+	}
+	if c.Suite.Retry.BackoffMS < 0 {
+		return errors.New("suite.yaml: retry.backoff_ms must be >= 0")
+	}
+	if c.Suite.Retry.RateLimitMaxAttempts <= 0 {
+		return errors.New("suite.yaml: retry.rate_limit_max_attempts must be > 0")
+	}
+	if c.Suite.Retry.RateLimitFallbackMS < 0 {
+		return errors.New("suite.yaml: retry.rate_limit_fallback_ms must be >= 0")
 	}
 	if c.Suite.Retry.TestRetries < 0 {
 		return errors.New("suite.yaml: retry.test_retries must be >= 0")
@@ -454,6 +482,13 @@ func validateTestOverride(scope, testID string, t TestOverride) error {
 		case "forced", "required", "auto":
 		default:
 			return fmt.Errorf("%s.tool_choice_mode must be one of forced|required|auto", scope)
+		}
+	}
+	if role := strings.ToLower(strings.TrimSpace(t.InstructionRole)); role != "" {
+		switch role {
+		case "developer", "system", "user":
+		default:
+			return fmt.Errorf("%s.instruction_role must be one of developer|system|user", scope)
 		}
 	}
 	if eff := strings.TrimSpace(t.ReasoningEffort); eff != "" {

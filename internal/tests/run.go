@@ -2,6 +2,7 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -175,7 +176,18 @@ func (r *Runner) runTestWithRetries(ctx context.Context, test TestCase, job job)
 		if ov, ok := testOverrideForProfile(r.cfg, job.Profile, test.ID); ok && ov.TimeoutSeconds > 0 {
 			timeoutSeconds = ov.TimeoutSeconds
 		}
-		runCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+		attemptCtx := ctx
+		if job.Profile.RateLimitPerMinute > 0 {
+			attemptCtx = httpclient.WithRateLimit(attemptCtx, job.Profile.Name, job.Profile.RateLimitPerMinute)
+			if r.client != nil {
+				reservedCtx, err := r.client.ReserveRateLimit(attemptCtx)
+				if err != nil {
+					return rateLimitReservationErrorResult(test, job, err)
+				}
+				attemptCtx = reservedCtx
+			}
+		}
+		runCtx, cancel := context.WithTimeout(attemptCtx, time.Duration(timeoutSeconds)*time.Second)
 		res = r.safeRunTest(runCtx, test, job)
 		cancel()
 		res = r.applyTimeoutPolicy(test.ID, job.Profile, res)
@@ -187,6 +199,27 @@ func (r *Runner) runTestWithRetries(ctx context.Context, test TestCase, job job)
 			return res
 		}
 	}
+	return res
+}
+
+func rateLimitReservationErrorResult(test TestCase, job job, err error) Result {
+	res := Result{
+		TestID:   test.ID,
+		TestName: test.Name,
+		Profile:  job.Profile.Name,
+		Pass:     job.Pass,
+		Model:    job.Profile.ResponsesModel,
+		IsWarmup: job.IsWarmup,
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		res.Status = StatusTimeout
+		res.ErrorType = "timeout"
+		res.ErrorMessage = err.Error()
+		return res
+	}
+	res.Status = StatusFail
+	res.ErrorType = "http_error"
+	res.ErrorMessage = err.Error()
 	return res
 }
 
