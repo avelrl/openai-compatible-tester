@@ -94,7 +94,13 @@ func Execute() int {
 		return 2
 	}
 
-	retryCfg := httpclient.BuildRetryConfig(cfg.Suite.Retry.MaxAttempts, cfg.Suite.Retry.BackoffMS, cfg.Suite.Retry.RetryOnStatus)
+	retryCfg := httpclient.BuildRetryConfigWithRateLimit(
+		cfg.Suite.Retry.MaxAttempts,
+		cfg.Suite.Retry.BackoffMS,
+		cfg.Suite.Retry.RetryOnStatus,
+		cfg.Suite.Retry.RateLimitMaxAttempts,
+		cfg.Suite.Retry.RateLimitFallbackMS,
+	)
 	clientTimeoutSeconds := cfg.Suite.TimeoutSeconds
 	for _, ov := range cfg.Suite.Tests {
 		if ov.TimeoutSeconds > clientTimeoutSeconds {

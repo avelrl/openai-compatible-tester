@@ -1,0 +1,166 @@
+profiles:
+  - name: "nvidia-kimi-k2-instruct"
+    chat_model: "moonshotai/kimi-k2-instruct"
+    responses_model: "moonshotai/kimi-k2-instruct"
+    reasoning_effort: "minimal"
+    temperature: 0
+    rate_limit_per_minute: 40
+    extra: {}
+
+  # Skipped for now: NVIDIA-hosted GLM5 is consistently slow and times out on
+  # basic, structured, and tool-calling paths.
+  # - name: "nvidia-glm5"
+  #   chat_model: "z-ai/glm5"
+  #   responses_model: "z-ai/glm5"
+  #   temperature: 0
+  #   rate_limit_per_minute: 40
+  #   extra: {}
+  #   tests:
+  #     chat.basic:
+  #       instruction_role: system
+  #     chat.stream:
+  #       instruction_role: system
+  #     chat.tool_call:
+  #       timeout_seconds: 120
+  #     chat.tool_call.required:
+  #       timeout_seconds: 120
+  #       max_tokens: 48
+
+  - name: "nvidia-deepseek-3.2"
+    chat_model: "deepseek-ai/deepseek-v3.2"
+    responses_model: "deepseek-ai/deepseek-v3.2"
+    reasoning_effort: "minimal"
+    temperature: 0
+    rate_limit_per_minute: 40
+    extra: {}
+    tests:
+      chat.basic:
+        instruction_role: system
+      chat.stream:
+        instruction_role: system
+
+  - name: "nvidia-nemotron-3-super-120b-a12b"
+    chat_model: "nvidia/nemotron-3-super-120b-a12b"
+    responses_model: "nvidia/nemotron-3-super-120b-a12b"
+    temperature: 0
+    rate_limit_per_minute: 40
+    extra: {}
+
+  - name: "nvidia-qwen3-next-80b-a3b-instruct"
+    chat_model: "qwen/qwen3-next-80b-a3b-instruct"
+    responses_model: "qwen/qwen3-next-80b-a3b-instruct"
+    temperature: 0
+    rate_limit_per_minute: 40
+    extra: {}
+    tests:
+      chat.basic:
+        instruction_role: system
+      chat.stream:
+        instruction_role: system
+
+  # Skipped for now: NVIDIA-hosted qwen2.5-coder-32b lacks tool use and
+  # rejects json_schema, so it is not useful as an agent/coder reference.
+  # - name: "nvidia-qwen2.5-coder-32b-instruct"
+  #   chat_model: "qwen/qwen2.5-coder-32b-instruct"
+  #   responses_model: "qwen/qwen2.5-coder-32b-instruct"
+  #   temperature: 0
+  #   rate_limit_per_minute: 40
+  #   extra: {}
+  #   tests:
+  #     chat.basic:
+  #       instruction_role: system
+  #     chat.stream:
+  #       instruction_role: system
+
+  - name: "nvidia-qwen3.5-397b-a17b"
+    chat_model: "qwen/qwen3.5-397b-a17b"
+    responses_model: "qwen/qwen3.5-397b-a17b"
+    temperature: 0
+    rate_limit_per_minute: 40
+    extra: {}
+
+  # Skipped for now: NVIDIA-hosted qwen3-coder-480b is too slow for practical
+  # use here; basic/stream work, but the useful agent paths time out.
+  # - name: "nvidia-qwen3-coder-480b-a35b-instruct"
+  #   chat_model: "qwen/qwen3-coder-480b-a35b-instruct"
+  #   responses_model: "qwen/qwen3-coder-480b-a35b-instruct"
+  #   temperature: 0
+  #   rate_limit_per_minute: 40
+  #   extra: {}
+  #   tests:
+  #     chat.basic:
+  #       instruction_role: system
+  #     chat.stream:
+  #       instruction_role: system
+
+  # Skipped for now: NVIDIA-hosted qwen3-next-thinking does not satisfy
+  # strict exactness and burns budget in reasoning before tools/JSON.
+  # - name: "nvidia-qwen3-next-80b-a3b-thinking"
+  #   chat_model: "qwen/qwen3-next-80b-a3b-thinking"
+  #   responses_model: "qwen/qwen3-next-80b-a3b-thinking"
+  #   temperature: 0
+  #   rate_limit_per_minute: 40
+  #   extra: {}
+  #   tests:
+  #     chat.basic:
+  #       instruction_role: system
+  #     chat.stream:
+  #       instruction_role: system
+
+  - name: "nvidia-kimi-k2.5"
+    chat_model: "moonshotai/kimi-k2.5"
+    responses_model: "moonshotai/kimi-k2.5"
+    reasoning_effort: "minimal"
+    temperature: 0
+    rate_limit_per_minute: 10
+    extra: {}
+    tests:
+      chat.tool_call:
+        reasoning_effort: omit
+        max_tokens: 128
+      chat.tool_call.required:
+        reasoning_effort: omit
+        max_tokens: 128
+      chat.structured.json_schema:
+        reasoning_effort: minimal
+        max_tokens: 256
+      chat.structured.json_object:
+        reasoning_effort: minimal
+        max_tokens: 256
+
+  # Skipped for now: NVIDIA-hosted Devstral rejects developer role, emits
+  # malformed tool-call arguments, and crashes on structured outputs.
+  # - name: "nvidia-devstral-2-123b-instruct-2512"
+  #   chat_model: "mistralai/devstral-2-123b-instruct-2512"
+  #   responses_model: "mistralai/devstral-2-123b-instruct-2512"
+  #   temperature: 0
+  #   rate_limit_per_minute: 40
+  #   extra: {}
+  #   tests:
+  #     chat.basic:
+  #       instruction_role: system
+  #     chat.stream:
+  #       instruction_role: system
+
+  # Skipped for now: NVIDIA-hosted llama-3.3-nemotron-super-49b-v1.5 leaks
+  # visible thinking into basic/stream and fails the second step of tool flows.
+  # - name: "nvidia-llama-3.3-nemotron-super-49b-v1.5"
+  #   chat_model: "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+  #   responses_model: "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+  #   temperature: 0
+  #   rate_limit_per_minute: 40
+  #   extra: {}
+  #   tests:
+  #     chat.basic:
+  #       instruction_role: system
+  #     chat.stream:
+  #       instruction_role: system
+
+  # Skipped for now: NVIDIA-hosted MiniMax M2.5 leaks visible thinking into
+  # content, breaks structured JSON, and fails required tool calling.
+  # - name: "nvidia-minimax-m2.5"
+  #   chat_model: "minimaxai/minimax-m2.5"
+  #   responses_model: "minimaxai/minimax-m2.5"
+  #   temperature: 0
+  #   rate_limit_per_minute: 40
+  #   extra: {}
