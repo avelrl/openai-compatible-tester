@@ -328,6 +328,13 @@ func responsesConversationInstructionItem(cfg config.Config, profile config.Mode
 	}
 }
 
+func overridePromptText(raw, fallback string) string {
+	if text := strings.TrimSpace(raw); text != "" {
+		return text
+	}
+	return fallback
+}
+
 func applyChatReasoningOverride(payload map[string]interface{}, effort string) {
 	effort = strings.TrimSpace(effort)
 	switch effort {
@@ -538,7 +545,16 @@ func runResponsesStructuredSchema(ctx context.Context, rc RunContext) Result {
 	if maxOutputTokens := effectiveResponsesMaxOutputTokens(ov); maxOutputTokens != nil {
 		payload["max_output_tokens"] = *maxOutputTokens
 	}
-	payload["input"] = responsesInstructionInput(rc.Config, rc.Profile, "responses.structured.json_schema", "system", "Return JSON strictly according to the schema.", "Generate an object with status=\"ok\" and value=42.")
+	instruction := overridePromptText(ov.InstructionText, "Return JSON strictly according to the schema.")
+	userPrompt := overridePromptText(ov.UserText, "Generate an object with status=\"ok\" and value=42.")
+	payload["input"] = responsesInstructionInput(
+		rc.Config,
+		rc.Profile,
+		"responses.structured.json_schema",
+		"system",
+		instruction,
+		userPrompt,
+	)
 	payload["text"] = map[string]interface{}{
 		"format": map[string]interface{}{
 			"type": "json_schema",
@@ -572,7 +588,16 @@ func runResponsesStructuredObject(ctx context.Context, rc RunContext) Result {
 	if maxOutputTokens := effectiveResponsesMaxOutputTokens(ov); maxOutputTokens != nil {
 		payload["max_output_tokens"] = *maxOutputTokens
 	}
-	payload["input"] = responsesInstructionInput(rc.Config, rc.Profile, "responses.structured.json_object", "system", "You output JSON only.", "Return JSON like {\"ok\":true}.")
+	instruction := overridePromptText(ov.InstructionText, "You output JSON only.")
+	userPrompt := overridePromptText(ov.UserText, "Return JSON like {\"ok\":true}.")
+	payload["input"] = responsesInstructionInput(
+		rc.Config,
+		rc.Profile,
+		"responses.structured.json_object",
+		"system",
+		instruction,
+		userPrompt,
+	)
 	payload["text"] = map[string]interface{}{
 		"format": map[string]interface{}{"type": "json_object"},
 	}
@@ -1236,9 +1261,11 @@ func runChatStructuredSchema(ctx context.Context, rc RunContext) Result {
 	if maxTokens := chatMaxTokensOverride(ov); maxTokens != nil {
 		payload["max_tokens"] = *maxTokens
 	}
+	instruction := overridePromptText(ov.InstructionText, "Return JSON strictly according to the schema.")
+	userPrompt := overridePromptText(ov.UserText, "Generate an object with status=\"ok\" and value=42.")
 	payload["messages"] = []map[string]string{
-		chatInstructionMessage(rc.Config, rc.Profile, "chat.structured.json_schema", "system", "Return JSON strictly according to the schema."),
-		{"role": "user", "content": "Generate an object with status=\"ok\" and value=42."},
+		chatInstructionMessage(rc.Config, rc.Profile, "chat.structured.json_schema", "system", instruction),
+		{"role": "user", "content": userPrompt},
 	}
 	payload["response_format"] = map[string]interface{}{
 		"type": "json_schema",
@@ -1274,9 +1301,11 @@ func runChatStructuredObject(ctx context.Context, rc RunContext) Result {
 	if maxTokens := chatMaxTokensOverride(ov); maxTokens != nil {
 		payload["max_tokens"] = *maxTokens
 	}
+	instruction := overridePromptText(ov.InstructionText, "You output JSON only.")
+	userPrompt := overridePromptText(ov.UserText, "Return JSON like {\"ok\":true}.")
 	payload["messages"] = []map[string]string{
-		chatInstructionMessage(rc.Config, rc.Profile, "chat.structured.json_object", "system", "You output JSON only."),
-		{"role": "user", "content": "Return JSON like {\"ok\":true}."},
+		chatInstructionMessage(rc.Config, rc.Profile, "chat.structured.json_object", "system", instruction),
+		{"role": "user", "content": userPrompt},
 	}
 	payload["response_format"] = map[string]interface{}{
 		"type": "json_object",
