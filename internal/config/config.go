@@ -146,6 +146,8 @@ type TestOverride struct {
 	// InstructionRole overrides the role used for the leading instruction message
 	// in chat tests that separate instruction from user input.
 	InstructionRole string `yaml:"instruction_role"` // developer|system|user
+	InstructionText string `yaml:"instruction_text"`
+	UserText        string `yaml:"user_text"`
 
 	// Tool calling knobs (used by tool_call tests).
 	ToolChoiceMode    string `yaml:"tool_choice_mode"` // forced|required|auto

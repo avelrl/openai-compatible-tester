@@ -187,7 +187,7 @@ func TestLoadAcceptsProfileTestOverrides(t *testing.T) {
 	if err := os.WriteFile(suite, []byte("passes: 1\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(models, []byte("profiles:\n  - name: kimi-tuned\n    chat_model: chat\n    responses_model: resp\n    tests:\n      chat.tool_call.required:\n        max_tokens: 128\n        reasoning_effort: omit\n        instruction_role: system\n"), 0o644); err != nil {
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: kimi-tuned\n    chat_model: chat\n    responses_model: resp\n    tests:\n      chat.tool_call.required:\n        max_tokens: 128\n        reasoning_effort: omit\n        instruction_role: system\n        instruction_text: Use the tool only.\n        user_text: Call add.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
@@ -220,6 +220,12 @@ func TestLoadAcceptsProfileTestOverrides(t *testing.T) {
 	}
 	if ov.InstructionRole != "system" {
 		t.Fatalf("instruction_role=%q", ov.InstructionRole)
+	}
+	if ov.InstructionText != "Use the tool only." {
+		t.Fatalf("instruction_text=%q", ov.InstructionText)
+	}
+	if ov.UserText != "Call add." {
+		t.Fatalf("user_text=%q", ov.UserText)
 	}
 	if profile.RateLimitPerMinute != 0 {
 		t.Fatalf("rate_limit_per_minute=%d, want 0 by default", profile.RateLimitPerMinute)

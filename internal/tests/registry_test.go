@@ -329,6 +329,8 @@ func TestTestOverrideForProfileMergesSuiteDefaults(t *testing.T) {
 					TimeoutSeconds:  60,
 					MaxTokens:       &v96,
 					InstructionRole: "developer",
+					InstructionText: "Use the tool.",
+					UserText:        "Call sum.",
 					LiteLLMHeaders:  map[string]string{"x-litellm-timeout": "60"},
 				},
 			},
@@ -341,6 +343,7 @@ func TestTestOverrideForProfileMergesSuiteDefaults(t *testing.T) {
 				TimeoutSeconds:  45,
 				ReasoningEffort: "omit",
 				InstructionRole: "system",
+				InstructionText: "Use only add.",
 			},
 		},
 	}
@@ -363,6 +366,12 @@ func TestTestOverrideForProfileMergesSuiteDefaults(t *testing.T) {
 	}
 	if got.InstructionRole != "system" {
 		t.Fatalf("instruction_role=%q, want system", got.InstructionRole)
+	}
+	if got.InstructionText != "Use only add." {
+		t.Fatalf("instruction_text=%q, want override", got.InstructionText)
+	}
+	if got.UserText != "Call sum." {
+		t.Fatalf("user_text=%q, want inherited text", got.UserText)
 	}
 	if got.LiteLLMHeaders["x-litellm-timeout"] != "60" {
 		t.Fatalf("expected inherited header, got %q", got.LiteLLMHeaders["x-litellm-timeout"])
@@ -816,6 +825,145 @@ func TestRunResponsesStreamAppliesOverrides(t *testing.T) {
 	}
 	if got := first["role"]; got != "user" {
 		t.Fatalf("role=%v, want user", got)
+	}
+}
+
+func TestRunChatStructuredObjectAppliesPromptOverrides(t *testing.T) {
+	var gotBody map[string]interface{}
+	cfg := config.Config{
+		BaseURL: "https://example.test",
+		Endpoints: config.EndpointsConfig{
+			Paths: config.EndpointsPaths{
+				Chat: "/v1/chat/completions",
+			},
+		},
+		Suite: config.SuiteConfig{
+			ChatReasoning: config.Toggle{Enabled: true},
+			Report:        config.ReportConfig{SnippetLimitBytes: 4096},
+		},
+	}
+	profile := config.ModelProfile{
+		Name:            "p",
+		ChatModel:       "m",
+		ResponsesModel:  "m",
+		ReasoningEffort: "minimal",
+		Tests: map[string]config.TestOverride{
+			"chat.structured.json_object": {
+				InstructionText: "Return raw JSON only.",
+				UserText:        "Return {\"ok\":true}.",
+				ReasoningEffort: "omit",
+				MaxTokens:       intPtr(32),
+			},
+		},
+	}
+	client := httpclient.NewWithHTTPClient(
+		cfg.BaseURL,
+		"",
+		nil,
+		httpclient.BuildRetryConfig(1, 0, nil),
+		&http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				defer r.Body.Close()
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatalf("read body: %v", err)
+				}
+				if err := json.Unmarshal(body, &gotBody); err != nil {
+					t.Fatalf("unmarshal body: %v", err)
+				}
+				return jsonResponse(http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"{\"ok\":true}"},"finish_reason":"stop"}]}`), nil
+			}),
+		},
+	)
+
+	res := runChatStructuredObject(context.Background(), RunContext{Client: client, Config: cfg, Profile: profile})
+	if res.Status != StatusPass {
+		t.Fatalf("status=%s error=%s", res.Status, res.ErrorMessage)
+	}
+	if _, ok := gotBody["reasoning"]; ok {
+		t.Fatalf("expected reasoning to be omitted, got %v", gotBody["reasoning"])
+	}
+	msgs, ok := gotBody["messages"].([]interface{})
+	if !ok || len(msgs) != 2 {
+		t.Fatalf("messages=%T %v", gotBody["messages"], gotBody["messages"])
+	}
+	first, _ := msgs[0].(map[string]interface{})
+	second, _ := msgs[1].(map[string]interface{})
+	if got := first["content"]; got != "Return raw JSON only." {
+		t.Fatalf("instruction=%v", got)
+	}
+	if got := second["content"]; got != "Return {\"ok\":true}." {
+		t.Fatalf("user content=%v", got)
+	}
+}
+
+func TestRunResponsesStructuredObjectAppliesPromptOverrides(t *testing.T) {
+	var gotBody map[string]interface{}
+	cfg := config.Config{
+		BaseURL: "https://example.test",
+		Endpoints: config.EndpointsConfig{
+			Paths: config.EndpointsPaths{
+				Responses: "/v1/responses",
+			},
+		},
+		Suite: config.SuiteConfig{
+			Report: config.ReportConfig{SnippetLimitBytes: 4096},
+		},
+	}
+	profile := config.ModelProfile{
+		Name:            "p",
+		ChatModel:       "m",
+		ResponsesModel:  "m",
+		ReasoningEffort: "minimal",
+		Tests: map[string]config.TestOverride{
+			"responses.structured.json_object": {
+				InstructionText: "Return raw JSON only.",
+				UserText:        "Return {\"ok\":true}.",
+				ReasoningEffort: "omit",
+				MaxOutputTokens: intPtr(32),
+			},
+		},
+	}
+	client := httpclient.NewWithHTTPClient(
+		cfg.BaseURL,
+		"",
+		nil,
+		httpclient.BuildRetryConfig(1, 0, nil),
+		&http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				defer r.Body.Close()
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatalf("read body: %v", err)
+				}
+				if err := json.Unmarshal(body, &gotBody); err != nil {
+					t.Fatalf("unmarshal body: %v", err)
+				}
+				return jsonResponse(http.StatusOK, `{"output":[{"type":"message","content":[{"type":"output_text","text":"{\"ok\":true}"}]}]}`), nil
+			}),
+		},
+	)
+
+	res := runResponsesStructuredObject(context.Background(), RunContext{Client: client, Config: cfg, Profile: profile})
+	if res.Status != StatusPass {
+		t.Fatalf("status=%s error=%s", res.Status, res.ErrorMessage)
+	}
+	if _, ok := gotBody["reasoning"]; ok {
+		t.Fatalf("expected reasoning to be omitted, got %v", gotBody["reasoning"])
+	}
+	input, ok := gotBody["input"].([]interface{})
+	if !ok || len(input) != 2 {
+		t.Fatalf("input=%T %v", gotBody["input"], gotBody["input"])
+	}
+	first, _ := input[0].(map[string]interface{})
+	second, _ := input[1].(map[string]interface{})
+	if got := first["content"]; got != "Return raw JSON only." {
+		t.Fatalf("instruction=%v", got)
+	}
+	if got := second["content"]; got != "Return {\"ok\":true}." {
+		t.Fatalf("user content=%v", got)
 	}
 }
 
