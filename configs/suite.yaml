@@ -1,5 +1,6 @@
+mode: compat
 passes: 1
-warmup_passes: 1
+warmup_passes: 0
 parallelism: 1
 timeout_seconds: 60
 litellm_headers: {}
@@ -23,7 +24,7 @@ conversations:
 memory:
   enabled: true
 chat_reasoning:
-  enabled: true
+  enabled: false
 tests:
   responses.memory.prev_id:
     timeout_seconds: 45
@@ -43,10 +44,10 @@ tests:
     stream_timeout_seconds: 30
     litellm_headers:
       x-litellm-timeout: 60
-    tool_choice_mode: forced # forced|required|auto
+    tool_choice_mode: forced # forced|forced_compat|required|auto
     forced_tool_name: add
     parallel_tool_calls: false
-    reasoning_effort: minimal # minimal|low|medium|high|omit
+    reasoning_effort: omit # safer generic default; model-specific values belong in profile overrides
     strict_mode: false
   responses.tool_call.required:
     timeout_seconds: 60
@@ -54,13 +55,19 @@ tests:
     stream_timeout_seconds: 30
     tool_choice_mode: required
     parallel_tool_calls: false
-    reasoning_effort: minimal
+    reasoning_effort: omit
     strict_mode: false
+  responses.custom_tool:
+    timeout_seconds: 60
+    reasoning_effort: omit
+  responses.custom_tool.grammar:
+    timeout_seconds: 60
+    reasoning_effort: omit
   chat.tool_call:
     timeout_seconds: 60
     litellm_headers:
       x-litellm-timeout: 60
-    tool_choice_mode: forced # forced|required|auto
+    tool_choice_mode: forced # forced|forced_compat|required|auto
     forced_tool_name: add
     parallel_tool_calls: false
     max_tokens: 64

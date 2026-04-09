@@ -25,14 +25,26 @@ type Summary struct {
 }
 
 type Analysis struct {
-	AgentReady     []AgentReadiness
-	ClientCompat   []ClientCompatibility
-	BasicExactness []BasicExactness
-	Stats          []TestStats
-	Flaky          []TestStats
-	Unsupported    []Incompatibility
-	Incompat       []Incompatibility
-	SanitySkips    []SanitySkip
+	Spec          SpecAnalysis          `json:"spec"`
+	Compatibility CompatibilityAnalysis `json:"compatibility"`
+}
+
+type SpecAnalysis struct {
+	SurfaceReadiness []AgentReadiness   `json:"surface_readiness"`
+	Stats            []TestStats        `json:"stats"`
+	Unsupported      []Incompatibility  `json:"unsupported"`
+	Violations       []Incompatibility  `json:"violations"`
+}
+
+type CompatibilityAnalysis struct {
+	AgentReady     []AgentReadiness      `json:"agent_readiness"`
+	ClientCompat   []ClientCompatibility `json:"client_compatibility"`
+	BasicExactness []BasicExactness      `json:"basic_exactness"`
+	Stats          []TestStats           `json:"stats"`
+	Flaky          []TestStats           `json:"flaky"`
+	Unsupported    []Incompatibility     `json:"unsupported"`
+	Incompat       []Incompatibility     `json:"incompat"`
+	SanitySkips    []SanitySkip          `json:"sanity_skips"`
 }
 
 type AgentReadiness struct {
@@ -106,6 +118,8 @@ type FullLogRecord struct {
 	Attempts             int               `json:"attempts"`
 	Model                string            `json:"model"`
 	Status               tests.Status      `json:"status"`
+	CompatStatus         tests.Status      `json:"compat_status,omitempty"`
+	SpecStatus           tests.Status      `json:"spec_status,omitempty"`
 	HTTPStatus           int               `json:"http_status"`
 	LatencyMS            int64             `json:"latency_ms"`
 	BytesIn              int64             `json:"bytes_in"`
@@ -113,11 +127,18 @@ type FullLogRecord struct {
 	Tokens               int               `json:"tokens"`
 	ErrorType            string            `json:"error_type,omitempty"`
 	ErrorMessage         string            `json:"error_message,omitempty"`
+	CompatErrorType      string            `json:"compat_error_type,omitempty"`
+	CompatErrorMessage   string            `json:"compat_error_message,omitempty"`
+	SpecErrorType        string            `json:"spec_error_type,omitempty"`
+	SpecErrorMessage     string            `json:"spec_error_message,omitempty"`
 	ToolChoiceMode       string            `json:"tool_choice_mode,omitempty"`
+	EffectiveToolChoice  string            `json:"effective_tool_choice,omitempty"`
+	ToolChoiceFallback   bool              `json:"tool_choice_fallback_applied"`
 	ReasoningEffort      string            `json:"reasoning_effort,omitempty"`
 	LiteLLMTimeout       string            `json:"litellm_timeout,omitempty"`
 	FunctionCallObserved bool              `json:"function_call_observed"`
 	IsWarmup             bool              `json:"warmup"`
+	Evidence             *tests.Evidence   `json:"evidence,omitempty"`
 	Steps                []tests.TraceStep `json:"steps,omitempty"`
 }
 
@@ -132,7 +153,7 @@ func WriteCSV(outDir string, results []tests.Result) error {
 	defer f.Close()
 	w := csv.NewWriter(f)
 	defer w.Flush()
-	header := []string{"profile", "run_index", "attempts", "test_id", "test_name", "status", "http_status", "latency_ms", "bytes_in", "bytes_out", "tokens", "error_type", "error_message", "model", "warmup", "tool_choice_mode", "reasoning_effort", "litellm_timeout", "function_call_observed"}
+	header := []string{"profile", "run_index", "attempts", "test_id", "test_name", "status", "http_status", "latency_ms", "bytes_in", "bytes_out", "tokens", "error_type", "error_message", "model", "warmup", "tool_choice_mode", "effective_tool_choice", "tool_choice_fallback_applied", "reasoning_effort", "litellm_timeout", "function_call_observed"}
 	if err := w.Write(header); err != nil {
 		return err
 	}
@@ -154,6 +175,8 @@ func WriteCSV(outDir string, results []tests.Result) error {
 			r.Model,
 			fmt.Sprintf("%t", r.IsWarmup),
 			r.ToolChoiceMode,
+			r.EffectiveToolChoice,
+			fmt.Sprintf("%t", r.ToolChoiceFallback),
 			r.ReasoningEffort,
 			r.LiteLLMTimeout,
 			fmt.Sprintf("%t", r.FunctionCallObserved),
@@ -186,6 +209,8 @@ func WriteFullLogJSONL(outDir string, results []tests.Result) error {
 			Attempts:             r.Attempts,
 			Model:                r.Model,
 			Status:               r.Status,
+			CompatStatus:         r.CompatStatus,
+			SpecStatus:           r.SpecStatus,
 			HTTPStatus:           r.HTTPStatus,
 			LatencyMS:            r.LatencyMS,
 			BytesIn:              r.BytesIn,
@@ -193,11 +218,18 @@ func WriteFullLogJSONL(outDir string, results []tests.Result) error {
 			Tokens:               r.Tokens,
 			ErrorType:            r.ErrorType,
 			ErrorMessage:         r.ErrorMessage,
+			CompatErrorType:      r.CompatErrorType,
+			CompatErrorMessage:   r.CompatErrorMessage,
+			SpecErrorType:        r.SpecErrorType,
+			SpecErrorMessage:     r.SpecErrorMessage,
 			ToolChoiceMode:       r.ToolChoiceMode,
+			EffectiveToolChoice:  r.EffectiveToolChoice,
+			ToolChoiceFallback:   r.ToolChoiceFallback,
 			ReasoningEffort:      r.ReasoningEffort,
 			LiteLLMTimeout:       r.LiteLLMTimeout,
 			FunctionCallObserved: r.FunctionCallObserved,
 			IsWarmup:             r.IsWarmup,
+			Evidence:             r.Evidence,
 			Steps:                tests.EffectiveTraceSteps(r),
 		}
 		if err := enc.Encode(rec); err != nil {
@@ -221,38 +253,53 @@ func WriteSummaryMarkdown(outDir string, summary Summary, analysis Analysis) err
 	fmt.Fprintf(f, "# OpenAI Compatibility Test Summary\n\n")
 	fmt.Fprintf(f, "**Environment**\n\n")
 	fmt.Fprintf(f, "- Base URL: %s\n", summary.Config.BaseURL)
+	fmt.Fprintf(f, "- Primary mode: %s\n", summary.Config.Suite.Mode)
 	fmt.Fprintf(f, "- Date: %s\n", summary.EndedAt.Format(time.RFC3339))
 	fmt.Fprintf(f, "- Version: %s\n\n", ToolVersion)
 
-	fmt.Fprintf(f, "**Agent readiness**\n\n")
-	writeAgentReadiness(f, analysis)
+	compatSummary := summaryForMode(summary, config.ModeCompat)
 
-	fmt.Fprintf(f, "**Known client compatibility**\n\n")
-	writeClientCompatibility(f, analysis)
+	fmt.Fprintf(f, "**OpenAI spec conformance**\n\n")
+	fmt.Fprintf(f, "_Surface readiness_\n\n")
+	writeAgentReadiness(f, analysis.Spec.SurfaceReadiness)
+	fmt.Fprintf(f, "_Stats_\n\n")
+	writeStats(f, analysis.Spec.Stats)
+	fmt.Fprintf(f, "\n_Supported/unsupported surface gaps_\n\n")
+	writeUnsupported(f, analysis.Spec.Unsupported)
+	fmt.Fprintf(f, "\n_Top spec violations_\n\n")
+	writeIncompat(f, analysis.Spec.Violations, analysis.Spec.Unsupported)
 
-	fmt.Fprintf(f, "**Basic text exactness**\n\n")
-	writeBasicExactness(f, analysis)
+	fmt.Fprintf(f, "\n**Compatibility**\n\n")
 
-	fmt.Fprintf(f, "**Results Matrix**\n\n")
-	writeMatrix(f, summary)
+	fmt.Fprintf(f, "_Agent readiness_\n\n")
+	writeAgentReadiness(f, analysis.Compatibility.AgentReady)
 
-	fmt.Fprintf(f, "\n**Tool calling stability notes**\n\n")
-	writeToolCallingNotes(f, summary)
+	fmt.Fprintf(f, "_Known client compatibility_\n\n")
+	writeClientCompatibility(f, analysis.Compatibility.ClientCompat)
 
-	fmt.Fprintf(f, "\n**Stats**\n\n")
-	writeStats(f, analysis)
+	fmt.Fprintf(f, "_Basic text exactness_\n\n")
+	writeBasicExactness(f, analysis.Compatibility.BasicExactness)
 
-	fmt.Fprintf(f, "\n**Flakiness**\n\n")
-	writeFlakiness(f, analysis)
+	fmt.Fprintf(f, "_Results Matrix_\n\n")
+	writeMatrix(f, compatSummary)
 
-	fmt.Fprintf(f, "\n**Sanity skips**\n\n")
-	writeSanitySkips(f, analysis)
+	fmt.Fprintf(f, "\n_Tool calling stability notes_\n\n")
+	writeToolCallingNotes(f, compatSummary)
 
-	fmt.Fprintf(f, "\n**Unsupported features**\n\n")
-	writeUnsupported(f, analysis)
+	fmt.Fprintf(f, "\n_Stats_\n\n")
+	writeStats(f, analysis.Compatibility.Stats)
 
-	fmt.Fprintf(f, "\n**Top incompatibilities**\n\n")
-	writeIncompat(f, analysis)
+	fmt.Fprintf(f, "\n_Flakiness_\n\n")
+	writeFlakiness(f, analysis.Compatibility.Flaky)
+
+	fmt.Fprintf(f, "\n_Sanity skips_\n\n")
+	writeSanitySkips(f, analysis.Compatibility.SanitySkips)
+
+	fmt.Fprintf(f, "\n_Unsupported features_\n\n")
+	writeUnsupported(f, analysis.Compatibility.Unsupported)
+
+	fmt.Fprintf(f, "\n_Top incompatibilities_\n\n")
+	writeIncompat(f, analysis.Compatibility.Incompat, analysis.Compatibility.Unsupported)
 	return nil
 }
 
@@ -267,12 +314,13 @@ func WriteSummaryJSON(outDir string, summary Summary, analysis Analysis) error {
 	}
 	defer f.Close()
 	payload := map[string]interface{}{
-		"base_url":   summary.Config.BaseURL,
-		"version":    ToolVersion,
-		"started_at": summary.StartedAt.Format(time.RFC3339),
-		"ended_at":   summary.EndedAt.Format(time.RFC3339),
-		"results":    summary.Results,
-		"analysis":   analysis,
+		"base_url":     summary.Config.BaseURL,
+		"version":      ToolVersion,
+		"started_at":   summary.StartedAt.Format(time.RFC3339),
+		"ended_at":     summary.EndedAt.Format(time.RFC3339),
+		"primary_mode": summary.Config.Suite.Mode,
+		"results":      summary.Results,
+		"analysis":     analysis,
 	}
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
@@ -280,29 +328,60 @@ func WriteSummaryJSON(outDir string, summary Summary, analysis Analysis) error {
 }
 
 func Analyze(results []tests.Result, cfg config.Config) Analysis {
-	stats := buildStats(results, cfg)
+	compatResults := projectResults(results, config.ModeCompat)
+	strictResults := projectResults(results, config.ModeStrict)
+
+	compatStats := buildStats(compatResults, cfg)
 	flaky := make([]TestStats, 0)
-	for _, s := range stats {
+	for _, s := range compatStats {
 		if s.Total > 1 && s.Passes > 0 && s.PassRate < 1.0 {
 			flaky = append(flaky, s)
 		}
 	}
-	unsupported := buildUnsupported(results)
-	incompat := buildIncompat(results)
-	sanitySkips := buildSanitySkips(results)
-	agentReady := buildAgentReadiness(results, cfg)
-	clientCompat := buildClientCompatibility(results, cfg)
-	basicExactness := buildBasicExactness(results)
+	compatUnsupported := buildUnsupported(compatResults)
+	compatIncompat := buildIncompat(compatResults)
+	sanitySkips := buildSanitySkips(compatResults)
+	agentReady := buildAgentReadiness(compatResults, cfg)
+	clientCompat := buildClientCompatibility(compatResults, cfg)
+	basicExactness := buildBasicExactness(compatResults)
+
+	specStats := buildStats(strictResults, cfg)
+	specUnsupported := buildUnsupported(strictResults)
+	specViolations := buildIncompat(strictResults)
+	specReadiness := buildAgentReadiness(strictResults, cfg)
+
 	return Analysis{
-		AgentReady:     agentReady,
-		ClientCompat:   clientCompat,
-		BasicExactness: basicExactness,
-		Stats:          stats,
-		Flaky:          flaky,
-		Unsupported:    unsupported,
-		Incompat:       incompat,
-		SanitySkips:    sanitySkips,
+		Spec: SpecAnalysis{
+			SurfaceReadiness: specReadiness,
+			Stats:            specStats,
+			Unsupported:      specUnsupported,
+			Violations:       specViolations,
+		},
+		Compatibility: CompatibilityAnalysis{
+			AgentReady:     agentReady,
+			ClientCompat:   clientCompat,
+			BasicExactness: basicExactness,
+			Stats:          compatStats,
+			Flaky:          flaky,
+			Unsupported:    compatUnsupported,
+			Incompat:       compatIncompat,
+			SanitySkips:    sanitySkips,
+		},
 	}
+}
+
+func projectResults(results []tests.Result, mode string) []tests.Result {
+	out := make([]tests.Result, 0, len(results))
+	for _, r := range results {
+		out = append(out, tests.ProjectForMode(r, mode))
+	}
+	return out
+}
+
+func summaryForMode(summary Summary, mode string) Summary {
+	s := summary
+	s.Results = projectResults(summary.Results, mode)
+	return s
 }
 
 func buildAgentReadiness(results []tests.Result, cfg config.Config) []AgentReadiness {
@@ -354,6 +433,9 @@ func buildSurfaceReadiness(profile, surface string, testsByID map[string][]tests
 	if cfg.Suite.ToolCalling.Enabled && !anyPass(testsByID, surface+".tool_call.required") {
 		reasons = append(reasons, fmt.Sprintf("no successful required tool-calling path via %s", surface))
 	}
+	if hasSurfaceSpecViolation(surface, testsByID) {
+		notes = append(notes, "non-core surface checks exposed spec violations")
+	}
 
 	switch surface {
 	case "chat":
@@ -367,6 +449,9 @@ func buildSurfaceReadiness(profile, surface string, testsByID map[string][]tests
 			notes = append(notes, "multi-turn chat memory is unreliable")
 		}
 	case "responses":
+		if anyPass(testsByID, "responses.tool_call") && !anyPass(testsByID, "responses.tool_call.required") {
+			notes = append(notes, "function tools work only with tool_choice=\"auto\"")
+		}
 		if hasStatus(testsByID, tests.StatusFail, "responses.memory.prev_id") {
 			notes = append(notes, "previous_response_id follow-up is unreliable")
 		}
@@ -398,6 +483,24 @@ func buildSurfaceReadiness(profile, surface string, testsByID map[string][]tests
 		Reasons: reasons,
 		Notes:   notes,
 	}
+}
+
+func hasSurfaceSpecViolation(surface string, testsByID map[string][]tests.Result) bool {
+	prefix := surface + "."
+	for testID, list := range testsByID {
+		if !strings.HasPrefix(testID, prefix) {
+			continue
+		}
+		if testID == surface+".basic" || testID == surface+".stream" || testID == surface+".tool_call.required" {
+			continue
+		}
+		for _, r := range list {
+			if r.Status == tests.StatusFail {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func anyPass(byTest map[string][]tests.Result, ids ...string) bool {
@@ -545,6 +648,9 @@ func evaluateTargetCompatibility(profile string, byTest map[string][]tests.Resul
 	}
 	best.Notes = unique(best.Notes)
 	best.Reasons = unique(best.Reasons)
+	if best.Verdict == "COMPATIBLE" && len(best.Notes) > 0 {
+		best.Verdict = "COMPATIBLE WITH LIMITATIONS"
+	}
 	return best
 }
 
@@ -910,37 +1016,35 @@ func writeMatrix(f *os.File, summary Summary) {
 	}
 }
 
-func writeAgentReadiness(f *os.File, analysis Analysis) {
-	if len(analysis.AgentReady) == 0 {
+func writeAgentReadiness(f *os.File, entries []AgentReadiness) {
+	if len(entries) == 0 {
 		fmt.Fprintln(f, "No agent-readiness data available.")
 		fmt.Fprintln(f)
 		return
 	}
 	fmt.Fprintln(f, "| Profile | Surface | Verdict | Details |")
 	fmt.Fprintln(f, "| --- | --- | --- | --- |")
-	for _, entry := range analysis.AgentReady {
-		details := ""
-		if len(entry.Reasons) > 0 {
-			details = strings.Join(entry.Reasons, "; ")
-		} else if len(entry.Notes) > 0 {
-			details = strings.Join(entry.Notes, "; ")
-		} else {
-			details = "core agent paths passed"
+	for _, entry := range entries {
+		detailParts := append([]string(nil), entry.Reasons...)
+		detailParts = append(detailParts, entry.Notes...)
+		details := "core agent paths passed"
+		if len(detailParts) > 0 {
+			details = strings.Join(detailParts, "; ")
 		}
 		fmt.Fprintf(f, "| %s | %s | %s | %s |\n", entry.Profile, entry.Surface, entry.Verdict, details)
 	}
 	fmt.Fprintln(f)
 }
 
-func writeClientCompatibility(f *os.File, analysis Analysis) {
-	if len(analysis.ClientCompat) == 0 {
+func writeClientCompatibility(f *os.File, entries []ClientCompatibility) {
+	if len(entries) == 0 {
 		fmt.Fprintln(f, "No known-client compatibility data configured.")
 		fmt.Fprintln(f)
 		return
 	}
 	fmt.Fprintln(f, "| Profile | Category | Client | Best mode | Verification | Verdict | Required | Details |")
 	fmt.Fprintln(f, "| --- | --- | --- | --- | --- | --- | --- | --- |")
-	for _, entry := range analysis.ClientCompat {
+	for _, entry := range entries {
 		name := entry.TargetName
 		if strings.TrimSpace(entry.DocsURL) != "" {
 			name = fmt.Sprintf("[%s](%s)", entry.TargetName, entry.DocsURL)
@@ -976,15 +1080,15 @@ func formatVerification(entry ClientCompatibility) string {
 	return strings.Join(parts, " / ")
 }
 
-func writeBasicExactness(f *os.File, analysis Analysis) {
-	if len(analysis.BasicExactness) == 0 {
+func writeBasicExactness(f *os.File, entries []BasicExactness) {
+	if len(entries) == 0 {
 		fmt.Fprintln(f, "No basic exactness data available.")
 		fmt.Fprintln(f)
 		return
 	}
 	fmt.Fprintln(f, "| Profile | Surface | Protocol Path | Exact Match | Details |")
 	fmt.Fprintln(f, "| --- | --- | --- | --- | --- |")
-	for _, entry := range analysis.BasicExactness {
+	for _, entry := range entries {
 		protocol := "no"
 		exact := "no"
 		if entry.ProtocolCompatible {
@@ -1006,14 +1110,14 @@ func makeSeparators(count int) []string {
 	return parts
 }
 
-func writeStats(f *os.File, analysis Analysis) {
-	if len(analysis.Stats) == 0 {
+func writeStats(f *os.File, stats []TestStats) {
+	if len(stats) == 0 {
 		fmt.Fprintln(f, "No stats available.")
 		return
 	}
 	fmt.Fprintln(f, "| Test | Profile | Pass rate | Avg latency (ms) | p50 | p95 | p99 |")
 	fmt.Fprintln(f, "| --- | --- | --- | --- | --- | --- | --- |")
-	for _, s := range analysis.Stats {
+	for _, s := range stats {
 		p50 := s.Percentiles[50]
 		p95 := s.Percentiles[95]
 		p99 := s.Percentiles[99]
@@ -1021,46 +1125,46 @@ func writeStats(f *os.File, analysis Analysis) {
 	}
 }
 
-func writeFlakiness(f *os.File, analysis Analysis) {
-	if len(analysis.Flaky) == 0 {
+func writeFlakiness(f *os.File, stats []TestStats) {
+	if len(stats) == 0 {
 		fmt.Fprintln(f, "No flaky tests detected.")
 		return
 	}
-	for _, s := range analysis.Flaky {
+	for _, s := range stats {
 		fmt.Fprintf(f, "- %s [%s]: pass rate %.2f (%d/%d)\n", s.TestID, s.Profile, s.PassRate, s.Passes, s.Total)
 	}
 }
 
-func writeSanitySkips(f *os.File, analysis Analysis) {
-	if len(analysis.SanitySkips) == 0 {
+func writeSanitySkips(f *os.File, skips []SanitySkip) {
+	if len(skips) == 0 {
 		fmt.Fprintln(f, "No tests skipped after sanity.")
 		return
 	}
-	for _, s := range analysis.SanitySkips {
+	for _, s := range skips {
 		fmt.Fprintf(f, "- %s pass %d: skipped %d tests\n", s.Profile, s.Pass, s.Count)
 	}
 }
 
-func writeIncompat(f *os.File, analysis Analysis) {
-	if len(analysis.Incompat) == 0 {
-		if len(analysis.Unsupported) > 0 {
+func writeIncompat(f *os.File, incompat []Incompatibility, unsupported []Incompatibility) {
+	if len(incompat) == 0 {
+		if len(unsupported) > 0 {
 			fmt.Fprintln(f, "No failures detected. See Unsupported features above.")
 			return
 		}
 		fmt.Fprintln(f, "No incompatibilities detected.")
 		return
 	}
-	for _, inc := range analysis.Incompat {
+	for _, inc := range incompat {
 		fmt.Fprintf(f, "- %s (%d): %s (tests: %s)\n", inc.ErrorType, inc.Count, inc.Message, strings.Join(inc.Tests, ", "))
 	}
 }
 
-func writeUnsupported(f *os.File, analysis Analysis) {
-	if len(analysis.Unsupported) == 0 {
+func writeUnsupported(f *os.File, unsupported []Incompatibility) {
+	if len(unsupported) == 0 {
 		fmt.Fprintln(f, "No unsupported features detected.")
 		return
 	}
-	for _, inc := range analysis.Unsupported {
+	for _, inc := range unsupported {
 		fmt.Fprintf(f, "- %s (%d): %s (tests: %s)\n", inc.ErrorType, inc.Count, inc.Message, strings.Join(inc.Tests, ", "))
 	}
 }
@@ -1105,7 +1209,13 @@ func statusPart(symbol string, count, total int) []string {
 }
 
 func writeToolCallingNotes(f *os.File, summary Summary) {
-	toolTests := []string{"responses.tool_call", "chat.tool_call"}
+	toolTests := []string{
+		"responses.tool_call",
+		"responses.tool_call.required",
+		"responses.custom_tool",
+		"chat.tool_call",
+		"chat.tool_call.required",
+	}
 
 	byTestProfile := map[string]map[string][]tests.Result{}
 	for _, r := range summary.Results {
@@ -1118,8 +1228,8 @@ func writeToolCallingNotes(f *os.File, summary Summary) {
 		byTestProfile[r.TestID][r.Profile] = append(byTestProfile[r.TestID][r.Profile], r)
 	}
 
-	fmt.Fprintln(f, "| Test | Profile | P | F | U | T | function_call | tool_choice | reasoning | x-litellm-timeout |")
-	fmt.Fprintln(f, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+	fmt.Fprintln(f, "| Test | Profile | P | F | U | T | function_call | requested | effective | fallback | reasoning | x-litellm-timeout |")
+	fmt.Fprintln(f, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
 
 	for _, testID := range toolTests {
 		for _, p := range summary.Profiles {
@@ -1129,15 +1239,28 @@ func writeToolCallingNotes(f *os.File, summary Summary) {
 			}
 			pass, fail, unsup, timeout := countStatus(list)
 			observed := 0
-			toolChoice := ""
+			requestedChoice := ""
+			effectiveChoice := ""
+			fallbackTrue := false
+			fallbackSeen := false
 			reasoning := ""
 			timeoutHeader := ""
 			for _, r := range list {
 				if r.FunctionCallObserved {
 					observed++
 				}
-				if toolChoice == "" && strings.TrimSpace(r.ToolChoiceMode) != "" {
-					toolChoice = r.ToolChoiceMode
+				if requestedChoice == "" && strings.TrimSpace(r.ToolChoiceMode) != "" {
+					requestedChoice = r.ToolChoiceMode
+				}
+				if effectiveChoice == "" && strings.TrimSpace(r.EffectiveToolChoice) != "" {
+					effectiveChoice = r.EffectiveToolChoice
+				}
+				if strings.TrimSpace(r.EffectiveToolChoice) != "" {
+					fallbackSeen = true
+				}
+				if r.ToolChoiceFallback {
+					fallbackSeen = true
+					fallbackTrue = true
 				}
 				if reasoning == "" && strings.TrimSpace(r.ReasoningEffort) != "" {
 					reasoning = r.ReasoningEffort
@@ -1146,8 +1269,16 @@ func writeToolCallingNotes(f *os.File, summary Summary) {
 					timeoutHeader = r.LiteLLMTimeout
 				}
 			}
-			fmt.Fprintf(f, "| %s | %s | %d | %d | %d | %d | %d/%d | %s | %s | %s |\n",
-				testID, p.Name, pass, fail, unsup, timeout, observed, len(list), toolChoice, reasoning, timeoutHeader)
+			fallback := ""
+			if fallbackSeen {
+				if fallbackTrue {
+					fallback = "yes"
+				} else {
+					fallback = "no"
+				}
+			}
+			fmt.Fprintf(f, "| %s | %s | %d | %d | %d | %d | %d/%d | %s | %s | %s | %s | %s |\n",
+				testID, p.Name, pass, fail, unsup, timeout, observed, len(list), requestedChoice, effectiveChoice, fallback, reasoning, timeoutHeader)
 		}
 	}
 }

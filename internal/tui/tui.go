@@ -394,7 +394,7 @@ func (ui *UI) drawRight(x, y, w, h int) {
 		analysis := report.Analyze(snapshot, ui.cfg)
 		ui.print(x, line, styleHeader, "Analysis")
 		line++
-		for _, s := range analysis.Stats {
+		for _, s := range analysis.Compatibility.Stats {
 			if line >= y+h-1 {
 				break
 			}
@@ -1244,10 +1244,10 @@ func (ui *UI) saveSnapshot() error {
 		fmt.Fprintf(f, "| %s |\n", strings.Join(row, " | "))
 	}
 	fmt.Fprintf(f, "## Flakiness\n\n")
-	if len(analysis.Flaky) == 0 {
+	if len(analysis.Compatibility.Flaky) == 0 {
 		fmt.Fprintln(f, "No flaky tests detected.")
 	} else {
-		for _, s := range analysis.Flaky {
+		for _, s := range analysis.Compatibility.Flaky {
 			fmt.Fprintf(f, "- %s [%s]: %.2f (%d/%d)\n", s.TestID, s.Profile, s.PassRate, s.Passes, s.Total)
 		}
 	}

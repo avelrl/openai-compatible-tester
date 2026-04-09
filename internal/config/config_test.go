@@ -37,6 +37,102 @@ INLINE=ok # comment
 	}
 }
 
+func TestLoadDefaultsModeToCompat(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: default\n    chat_model: chat\n    responses_model: resp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=fromenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       filepath.Join(dir, ".env"),
+	})
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Suite.Mode != ModeCompat {
+		t.Fatalf("mode=%q, want %q", cfg.Suite.Mode, ModeCompat)
+	}
+}
+
+func TestLoadAcceptsStrictModeOverride(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\nmode: strict\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: default\n    chat_model: chat\n    responses_model: resp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=fromenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       filepath.Join(dir, ".env"),
+	})
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.Suite.Mode != ModeStrict {
+		t.Fatalf("mode=%q, want %q", cfg.Suite.Mode, ModeStrict)
+	}
+}
+
+func TestLoadRejectsInvalidMode(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\nmode: weird\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: default\n    chat_model: chat\n    responses_model: resp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=fromenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       filepath.Join(dir, ".env"),
+	})
+	if err == nil {
+		t.Fatal("expected invalid mode error")
+	}
+	if !strings.Contains(err.Error(), "suite.yaml: mode") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestLoadConfigPrecedence(t *testing.T) {
 	dir := t.TempDir()
 	suite := filepath.Join(dir, "suite.yaml")
@@ -232,6 +328,40 @@ func TestLoadAcceptsProfileTestOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadAcceptsReasoningEffortNoneOverride(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: ollama-tuned\n    chat_model: chat\n    responses_model: resp\n    tests:\n      chat.tool_call.required:\n        reasoning_effort: none\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=fromenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       filepath.Join(dir, ".env"),
+	})
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	ov := cfg.Models.Profiles[0].Tests["chat.tool_call.required"]
+	if ov.ReasoningEffort != "none" {
+		t.Fatalf("reasoning_effort=%q", ov.ReasoningEffort)
+	}
+}
+
 func TestLoadAcceptsProfileRateLimit(t *testing.T) {
 	dir := t.TempDir()
 	suite := filepath.Join(dir, "suite.yaml")
@@ -261,6 +391,38 @@ func TestLoadAcceptsProfileRateLimit(t *testing.T) {
 	}
 	if got := cfg.Models.Profiles[0].RateLimitPerMinute; got != 40 {
 		t.Fatalf("rate_limit_per_minute=%d, want 40", got)
+	}
+}
+
+func TestLoadAcceptsChatMaxTokensParam(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: openai-chat\n    chat_model: chat\n    responses_model: resp\n    chat_max_tokens_param: max_completion_tokens\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=fromenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       filepath.Join(dir, ".env"),
+	})
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if got := cfg.Models.Profiles[0].ChatMaxTokensParam; got != "max_completion_tokens" {
+		t.Fatalf("chat_max_tokens_param=%q", got)
 	}
 }
 
@@ -400,6 +562,38 @@ func TestLoadRejectsNegativeProfileRateLimit(t *testing.T) {
 		t.Fatal("expected invalid rate_limit_per_minute error")
 	}
 	if !strings.Contains(err.Error(), "rate_limit_per_minute") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadRejectsInvalidChatMaxTokensParam(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: bad\n    chat_model: chat\n    responses_model: resp\n    chat_max_tokens_param: nope\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("OPENAI_API_KEY=fromenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       filepath.Join(dir, ".env"),
+	})
+	if err == nil {
+		t.Fatal("expected invalid chat_max_tokens_param error")
+	}
+	if !strings.Contains(err.Error(), "chat_max_tokens_param") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

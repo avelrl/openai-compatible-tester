@@ -191,6 +191,7 @@ func (r *Runner) runTestWithRetries(ctx context.Context, test TestCase, job job)
 		res = r.safeRunTest(runCtx, test, job)
 		cancel()
 		res = r.applyTimeoutPolicy(test.ID, job.Profile, res)
+		res = finalizeModeResult(r.cfg.Suite.Mode, res)
 		res.Attempts = attempt
 		if !shouldRetryTestResult(res) || attempt == maxAttempts || ctx.Err() != nil {
 			return res

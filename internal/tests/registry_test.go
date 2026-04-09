@@ -31,6 +31,7 @@ func TestIsUnsupportedFeature(t *testing.T) {
 	tests := []string{
 		`{"error":"Invalid tool_choice type: 'object'. Supported string values: none, auto, required"}`,
 		`{"error":{"message":"Expected 'none' | 'auto' | 'required', received object"}}`,
+		`{"error":{"message":"'type' of tool must be 'function'"}}`,
 		`{"error":"'response_format.type' must be 'json_schema' or 'text'"}`,
 		`{"error":"Input should be 'text' or 'json_object'"}`,
 		`{"error":{"code":"invalid_prompt","message":"Invalid Responses API request"},"metadata":{"raw":"[{\"path\":[\"store\"],\"message\":\"Invalid input: expected false\"}]"}}`,
@@ -67,6 +68,33 @@ func TestExtractPreviousResponseID(t *testing.T) {
 	body := []byte(`{"previous_response_id":"resp_123"}`)
 	if got := extractPreviousResponseID(body); got != "resp_123" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestValidateCustomToolFreeformInput(t *testing.T) {
+	if err := validateCustomToolFreeformInput(`print("hello world")`); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := validateCustomToolFreeformInput(`{"input":"print(\"hello world\")"}`); err == nil {
+		t.Fatalf("expected JSON-wrapped input to fail")
+	}
+}
+
+func TestValidateMathExpressionToolInput(t *testing.T) {
+	if err := validateMathExpressionToolInput("4 + 4", 8); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := validateMathExpressionToolInput("2 + 3 * 2", 8); err != nil {
+		t.Fatalf("unexpected precedence error: %v", err)
+	}
+	if err := validateMathExpressionToolInput(`{"input":"4 + 4"}`, 8); err == nil {
+		t.Fatalf("expected JSON-wrapped grammar input to fail")
+	}
+	if err := validateMathExpressionToolInput("4 + nope", 8); err == nil {
+		t.Fatalf("expected invalid token to fail")
+	}
+	if err := validateMathExpressionToolInput("4+4", 8); err == nil || !strings.Contains(err.Error(), "single spaces") {
+		t.Fatalf("expected spacing error, got %v", err)
 	}
 }
 
@@ -171,6 +199,96 @@ func TestParseResponsesStreamEvent(t *testing.T) {
 	}
 }
 
+func TestProjectForModeResponsesChatFallbackFailsInStrict(t *testing.T) {
+	res := Result{
+		TestID:  "responses.basic",
+		Status:  StatusPass,
+		Evidence: &Evidence{
+			FallbackChatShapeOnResponses: true,
+		},
+	}
+
+	compat := ProjectForMode(res, config.ModeCompat)
+	if compat.Status != StatusPass {
+		t.Fatalf("compat status=%s", compat.Status)
+	}
+
+	strict := ProjectForMode(res, config.ModeStrict)
+	if strict.Status != StatusFail {
+		t.Fatalf("strict status=%s", strict.Status)
+	}
+}
+
+func TestProjectForModeErrorShapeRequiresCanonicalErrorObjectInStrict(t *testing.T) {
+	res := Result{
+		TestID:     "responses.error_shape",
+		Status:     StatusPass,
+		HTTPStatus: 400,
+		Evidence: &Evidence{
+			ErrorMessageSeen: true,
+		},
+	}
+
+	strict := ProjectForMode(res, config.ModeStrict)
+	if strict.Status != StatusFail {
+		t.Fatalf("strict status=%s", strict.Status)
+	}
+
+	res.Evidence = &Evidence{
+		ErrorObjectSeen:  true,
+		ErrorMessageSeen: true,
+		ErrorTypeSeen:    true,
+	}
+	strict = ProjectForMode(res, config.ModeStrict)
+	if strict.Status != StatusPass {
+		t.Fatalf("strict status=%s", strict.Status)
+	}
+}
+
+func TestIsStrictUnsupportedFeature(t *testing.T) {
+	body := []byte(`{"error":{"message":"unknown parameter: tool_choice"}}`)
+	if !isStrictUnsupportedFeature(body) {
+		t.Fatalf("expected strict unsupported")
+	}
+
+	body = []byte(`{"error":{"message":"Unsupported parameter: 'temperature' is not supported with this model."}}`)
+	if !isStrictUnsupportedFeature(body) {
+		t.Fatalf("expected unsupported parameter to count as strict unsupported")
+	}
+
+	body = []byte(`{"error":{"message":"Unsupported value: 'minimal' is not supported with this model."}}`)
+	if !isStrictUnsupportedFeature(body) {
+		t.Fatalf("expected unsupported value to count as strict unsupported")
+	}
+
+	body = []byte(`{"error":{"message":"unsupported backend mode"}}`)
+	if isStrictUnsupportedFeature(body) {
+		t.Fatalf("did not expect generic unsupported to count as strict unsupported")
+	}
+}
+
+func TestParseResponsesToolCallStreamEventDetailed(t *testing.T) {
+	data := `{"type":"response.output_item.added","item":{"type":"function_call","call_id":"call_1","name":"add","arguments":"{\"a\":40}"}}`
+	callID, name, args, eventType, canonical := parseResponsesToolCallStreamEventDetailed(data)
+	if callID != "call_1" || name != "add" || args == "" || eventType != "response.output_item.added" || !canonical {
+		t.Fatalf("unexpected canonical parse: %q %q %q %q %v", callID, name, args, eventType, canonical)
+	}
+
+	data = `{"choices":[{"delta":{"tool_calls":[{"id":"call_2","function":{"name":"add","arguments":"{\"a\":40}"}}]}}]}`
+	callID, name, args, eventType, canonical = parseResponsesToolCallStreamEventDetailed(data)
+	if callID != "call_2" || name != "add" || args == "" || eventType != "chat.completions.chunk" || canonical {
+		t.Fatalf("unexpected fallback parse: %q %q %q %q %v", callID, name, args, eventType, canonical)
+	}
+}
+
+func TestExtractResponseCustomToolCall(t *testing.T) {
+	body := []byte(`{"output":[{"type":"custom_tool_call","call_id":"call_123","name":"code_exec","input":"print(\"hello world\")"}]}`)
+	callID, name, input := extractResponseCustomToolCall(body)
+	if callID != "call_123" || name != "code_exec" || input != "print(\"hello world\")" {
+		t.Fatalf("unexpected custom tool call: callID=%q name=%q input=%q", callID, name, input)
+	}
+}
+
 func TestApplyChatReasoningOverride(t *testing.T) {
 	payload := map[string]interface{}{
 		"model":     "m",
@@ -188,6 +306,15 @@ func TestApplyChatReasoningOverride(t *testing.T) {
 		t.Fatalf("expected reasoning map")
 	}
 	if got := reasoning["effort"]; got != "minimal" {
+		t.Fatalf("got %v", got)
+	}
+
+	applyChatReasoningOverride(payload, "none")
+	reasoning, ok = payload["reasoning"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected reasoning map after none")
+	}
+	if got := reasoning["effort"]; got != "none" {
 		t.Fatalf("got %v", got)
 	}
 }
@@ -211,6 +338,15 @@ func TestApplyResponsesReasoningOverride(t *testing.T) {
 	if got := reasoning["effort"]; got != "minimal" {
 		t.Fatalf("got %v", got)
 	}
+
+	applyResponsesReasoningOverride(payload, "none")
+	reasoning, ok = payload["reasoning"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected reasoning map after none")
+	}
+	if got := reasoning["effort"]; got != "none" {
+		t.Fatalf("got %v", got)
+	}
 }
 
 func TestEffectiveChatMaxTokens(t *testing.T) {
@@ -225,6 +361,20 @@ func TestEffectiveChatMaxTokens(t *testing.T) {
 	}
 	if got := effectiveChatMaxTokens(config.TestOverride{MaxOutputTokens: &v96}); got != 96 {
 		t.Fatalf("max_output_tokens fallback = %d, want 96", got)
+	}
+}
+
+func TestApplyChatMaxTokensUsesProfileParam(t *testing.T) {
+	payload := map[string]interface{}{"model": "m"}
+	profile := config.ModelProfile{ChatMaxTokensParam: "max_completion_tokens"}
+
+	applyChatMaxTokens(payload, profile, 64)
+
+	if _, ok := payload["max_tokens"]; ok {
+		t.Fatalf("did not expect max_tokens in payload: %v", payload)
+	}
+	if got := payload["max_completion_tokens"]; got != 64 {
+		t.Fatalf("max_completion_tokens=%v", got)
 	}
 }
 
@@ -403,6 +553,26 @@ func TestEffectiveInstructionRole(t *testing.T) {
 	}
 }
 
+func TestChatMessagesWithInstructionMergesIntoFirstUserTurn(t *testing.T) {
+	yes := true
+	profile := config.ModelProfile{
+		Tests: map[string]config.TestOverride{
+			"chat.basic": {MergeInstructionIntoUser: &yes},
+		},
+	}
+
+	got := chatMessagesWithInstruction(config.Config{}, profile, "chat.basic", "developer", "Reply with exactly OK", "ping")
+	if len(got) != 1 {
+		t.Fatalf("len(messages)=%d", len(got))
+	}
+	if got[0]["role"] != "user" {
+		t.Fatalf("role=%q", got[0]["role"])
+	}
+	if got[0]["content"] != "Reply with exactly OK\n\nping" {
+		t.Fatalf("content=%q", got[0]["content"])
+	}
+}
+
 func TestResponsesInputWithOptionalInstructionPreservesFallback(t *testing.T) {
 	got := responsesInputWithOptionalInstruction(config.Config{}, config.ModelProfile{}, "responses.basic", "", "Reply with exactly OK", "ping", "ping: answer with OK")
 	raw, ok := got.(string)
@@ -435,6 +605,296 @@ func TestResponsesInputWithOptionalInstructionUsesConfiguredRole(t *testing.T) {
 	}
 	if items[1]["role"] != "user" || items[1]["content"] != "ping" {
 		t.Fatalf("user item=%v", items[1])
+	}
+}
+
+func TestResponsesInputWithOptionalInstructionMergesIntoUserTurn(t *testing.T) {
+	yes := true
+	profile := config.ModelProfile{
+		Tests: map[string]config.TestOverride{
+			"responses.basic": {MergeInstructionIntoUser: &yes},
+		},
+	}
+
+	got := responsesInputWithOptionalInstruction(config.Config{}, profile, "responses.basic", "", "Reply with exactly OK", "ping", "ping: answer with OK")
+	items, ok := got.([]map[string]string)
+	if !ok {
+		t.Fatalf("expected merged input, got %T", got)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items)=%d", len(items))
+	}
+	if items[0]["role"] != "user" || items[0]["content"] != "Reply with exactly OK\n\nping" {
+		t.Fatalf("merged item=%v", items[0])
+	}
+}
+
+func TestRunChatToolCallForcedCompatUsesRequiredToolChoice(t *testing.T) {
+	var bodies []map[string]interface{}
+	cfg := config.Config{
+		BaseURL: "http://example.test",
+		Endpoints: config.EndpointsConfig{
+			Paths: config.EndpointsPaths{
+				Chat: "/v1/chat/completions",
+			},
+		},
+		Suite: config.SuiteConfig{
+			ChatReasoning: config.Toggle{Enabled: true},
+			Report:        config.ReportConfig{SnippetLimitBytes: 4096},
+		},
+	}
+	profile := config.ModelProfile{
+		Name:           "p",
+		ChatModel:      "m",
+		ResponsesModel: "m",
+		Tests: map[string]config.TestOverride{
+			"chat.tool_call": {
+				ToolChoiceMode: "forced_compat",
+				ForcedToolName: "sum",
+			},
+		},
+	}
+	client := httpclient.NewWithHTTPClient(
+		cfg.BaseURL,
+		"",
+		nil,
+		httpclient.BuildRetryConfig(1, 0, nil),
+		&http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				defer r.Body.Close()
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatalf("read body: %v", err)
+				}
+				var parsed map[string]interface{}
+				if err := json.Unmarshal(body, &parsed); err != nil {
+					t.Fatalf("unmarshal body: %v", err)
+				}
+				bodies = append(bodies, parsed)
+				switch len(bodies) {
+				case 1:
+					return jsonResponse(http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"sum","arguments":"{\"a\":40,\"b\":2}"}}]},"finish_reason":"tool_calls"}]}`), nil
+				case 2:
+					return jsonResponse(http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"42"},"finish_reason":"stop"}]}`), nil
+				default:
+					t.Fatalf("unexpected request count: %d", len(bodies))
+					return nil, nil
+				}
+			}),
+		},
+	)
+
+	res := runChatToolCall(context.Background(), RunContext{Client: client, Config: cfg, Profile: profile})
+	if res.Status != StatusPass {
+		t.Fatalf("status=%s error=%s", res.Status, res.ErrorMessage)
+	}
+	first := bodies[0]
+	if got := first["tool_choice"]; got != "required" {
+		t.Fatalf("tool_choice=%v, want required", got)
+	}
+}
+
+func TestRunResponsesToolCallUsesProfileReasoningEffort(t *testing.T) {
+	var bodies []map[string]interface{}
+
+	cfg := config.Config{
+		Suite: config.SuiteConfig{},
+		Endpoints: config.EndpointsConfig{
+			Paths: config.EndpointsPaths{
+				Responses: "/v1/responses",
+			},
+		},
+	}
+	profile := config.ModelProfile{
+		Name:            "p",
+		ResponsesModel:  "m",
+		ReasoningEffort: "none",
+	}
+
+	client := httpclient.NewWithHTTPClient(
+		"https://example.com",
+		"",
+		nil,
+		httpclient.BuildRetryConfig(1, 0, nil),
+		&http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				defer r.Body.Close()
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatalf("read body: %v", err)
+				}
+				var parsed map[string]interface{}
+				if err := json.Unmarshal(body, &parsed); err != nil {
+					t.Fatalf("unmarshal body: %v", err)
+				}
+				bodies = append(bodies, parsed)
+				switch len(bodies) {
+				case 1:
+					return jsonResponse(http.StatusOK, `{"tool_choice":"auto","output":[{"type":"function_call","call_id":"call_1","name":"add","arguments":"{\"a\":40,\"b\":2}"}]}`), nil
+				case 2:
+					return jsonResponse(http.StatusOK, `{"tool_choice":"auto","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"42"}]}]}`), nil
+				default:
+					t.Fatalf("unexpected request count: %d", len(bodies))
+					return nil, nil
+				}
+			}),
+		},
+	)
+
+	res := runResponsesToolCallRequired(context.Background(), RunContext{Client: client, Config: cfg, Profile: profile})
+	if res.Status != StatusPass {
+		t.Fatalf("status=%s error=%s", res.Status, res.ErrorMessage)
+	}
+	if got := res.EffectiveToolChoice; got != "auto" {
+		t.Fatalf("effective tool_choice=%q, want auto", got)
+	}
+	if !res.ToolChoiceFallback {
+		t.Fatalf("expected tool_choice fallback to be recorded: %+v", res)
+	}
+	if len(bodies) != 2 {
+		t.Fatalf("request count=%d, want 2", len(bodies))
+	}
+	for i, body := range bodies {
+		reasoning, ok := body["reasoning"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("request %d missing reasoning", i+1)
+		}
+		if got := reasoning["effort"]; got != "none" {
+			t.Fatalf("request %d reasoning=%v, want none", i+1, got)
+		}
+	}
+}
+
+func TestRunResponsesCustomToolRejectsJSONWrappedInput(t *testing.T) {
+	cfg := config.Config{
+		Suite: config.SuiteConfig{},
+		Endpoints: config.EndpointsConfig{
+			Paths: config.EndpointsPaths{
+				Responses: "/v1/responses",
+			},
+		},
+	}
+	profile := config.ModelProfile{
+		Name:           "p",
+		ResponsesModel: "m",
+	}
+
+	client := httpclient.NewWithHTTPClient(
+		"https://example.com",
+		"",
+		nil,
+		httpclient.BuildRetryConfig(1, 0, nil),
+		&http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return jsonResponse(http.StatusOK, `{"output":[{"type":"custom_tool_call","call_id":"call_1","name":"code_exec","input":"{\"input\":\"print(\\\"hello world\\\")\"}"}]}`), nil
+			}),
+		},
+	)
+
+	res := runResponsesCustomTool(context.Background(), RunContext{Client: client, Config: cfg, Profile: profile})
+	if res.Status != StatusFail {
+		t.Fatalf("status=%s error=%s", res.Status, res.ErrorMessage)
+	}
+}
+
+func TestRecordToolChoiceEvidencePreservesFirstObservedMode(t *testing.T) {
+	result := &Result{ToolChoiceMode: "required"}
+
+	recordToolChoiceEvidence(result, map[string]interface{}{
+		"tool_choice": "required",
+	})
+	recordToolChoiceEvidence(result, map[string]interface{}{
+		"tool_choice": "auto",
+	})
+
+	if got := result.EffectiveToolChoice; got != "required" {
+		t.Fatalf("effective tool_choice=%q, want required", got)
+	}
+	if result.ToolChoiceFallback {
+		t.Fatalf("did not expect fallback: %+v", result)
+	}
+}
+
+func TestRecordToolChoiceEvidenceTreatsForcedObjectAsMatch(t *testing.T) {
+	result := &Result{ToolChoiceMode: "forced"}
+
+	recordToolChoiceEvidence(result, map[string]interface{}{
+		"tool_choice": map[string]interface{}{
+			"type": "function",
+			"name": "add",
+		},
+	})
+
+	if got := result.EffectiveToolChoice; got != "function:add" {
+		t.Fatalf("effective tool_choice=%q, want function:add", got)
+	}
+	if result.ToolChoiceFallback {
+		t.Fatalf("did not expect fallback: %+v", result)
+	}
+}
+
+func TestRunResponsesCustomToolGrammarUsesGrammarFormat(t *testing.T) {
+	var gotBody map[string]interface{}
+
+	cfg := config.Config{
+		Suite: config.SuiteConfig{},
+		Endpoints: config.EndpointsConfig{
+			Paths: config.EndpointsPaths{
+				Responses: "/v1/responses",
+			},
+		},
+	}
+	profile := config.ModelProfile{
+		Name:           "p",
+		ResponsesModel: "m",
+	}
+
+	client := httpclient.NewWithHTTPClient(
+		"https://example.com",
+		"",
+		nil,
+		httpclient.BuildRetryConfig(1, 0, nil),
+		&http.Client{
+			Timeout: 5 * time.Second,
+			Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				defer r.Body.Close()
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Fatalf("read body: %v", err)
+				}
+				if err := json.Unmarshal(body, &gotBody); err != nil {
+					t.Fatalf("unmarshal body: %v", err)
+				}
+				return jsonResponse(http.StatusOK, `{"output":[{"type":"custom_tool_call","call_id":"call_1","name":"math_exp","input":"4 + 4"}]}`), nil
+			}),
+		},
+	)
+
+	res := runResponsesCustomToolGrammar(context.Background(), RunContext{Client: client, Config: cfg, Profile: profile})
+	if res.Status != StatusPass {
+		t.Fatalf("status=%s error=%s", res.Status, res.ErrorMessage)
+	}
+
+	tools, ok := gotBody["tools"].([]interface{})
+	if !ok || len(tools) != 1 {
+		t.Fatalf("tools=%v", gotBody["tools"])
+	}
+	tool, ok := tools[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("tool=%T", tools[0])
+	}
+	format, ok := tool["format"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("format=%T", tool["format"])
+	}
+	if got := format["type"]; got != "grammar" {
+		t.Fatalf("format.type=%v", got)
+	}
+	if got := format["syntax"]; got != "lark" {
+		t.Fatalf("format.syntax=%v", got)
 	}
 }
 

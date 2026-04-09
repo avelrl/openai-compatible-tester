@@ -8,22 +8,41 @@ import (
 // parseResponsesToolCallStreamEvent extracts tool call details from a single SSE "data:" payload.
 // It supports both Responses-style events (response.*) and Chat-style chunk events.
 func parseResponsesToolCallStreamEvent(data string) (callID string, name string, argsPiece string) {
+	callID, name, argsPiece, _, _ = parseResponsesToolCallStreamEventDetailed(data)
+	return callID, name, argsPiece
+}
+
+func parseResponsesToolCallStreamEventDetailed(data string) (callID string, name string, argsPiece string, eventType string, canonical bool) {
 	data = strings.TrimSpace(data)
 	if data == "" || data == "[DONE]" {
-		return "", "", ""
+		return "", "", "", "[DONE]", false
 	}
 
-	// Responses-style events
 	var doc map[string]interface{}
 	if err := json.Unmarshal([]byte(data), &doc); err != nil {
-		return "", "", ""
+		return "", "", "", "", false
+	}
+	eventType, _ = doc["type"].(string)
+	if item, ok := doc["item"].(map[string]interface{}); ok && item != nil {
+		if t, _ := item["type"].(string); t == "function_call" {
+			callID = firstString(item["call_id"], item["id"])
+			name, _ = item["name"].(string)
+			argsPiece = anyToString(item["arguments"])
+			return callID, name, argsPiece, firstString(eventType, "response.output_item"), true
+		}
+	}
+	if eventType == "response.function_call_arguments.delta" || eventType == "response.function_call_arguments.done" {
+		callID = firstString(doc["call_id"], doc["item_id"], doc["id"])
+		name, _ = doc["name"].(string)
+		argsPiece = firstString(doc["delta"], doc["arguments"])
+		return callID, name, argsPiece, eventType, true
 	}
 	if item, ok := doc["item"].(map[string]interface{}); ok && item != nil {
 		if t, _ := item["type"].(string); t == "function_call" {
 			callID = firstString(item["call_id"], item["id"])
 			name, _ = item["name"].(string)
 			argsPiece = anyToString(item["arguments"])
-			return callID, name, argsPiece
+			return callID, name, argsPiece, firstString(eventType, "response.output_item"), true
 		}
 	}
 	if delta, ok := doc["delta"].(map[string]interface{}); ok && delta != nil {
@@ -32,13 +51,13 @@ func parseResponsesToolCallStreamEvent(data string) (callID string, name string,
 			callID = firstString(delta["call_id"], delta["id"])
 			name, _ = delta["name"].(string)
 			argsPiece = anyToString(delta["arguments"])
-			return callID, name, argsPiece
+			return callID, name, argsPiece, firstString(eventType, "fallback.delta"), false
 		}
 		if fc, ok := delta["function_call"].(map[string]interface{}); ok && fc != nil {
 			callID = firstString(fc["call_id"], fc["id"])
 			name, _ = fc["name"].(string)
 			argsPiece = anyToString(fc["arguments"])
-			return callID, name, argsPiece
+			return callID, name, argsPiece, firstString(eventType, "fallback.delta.function_call"), false
 		}
 	}
 
@@ -57,14 +76,14 @@ func parseResponsesToolCallStreamEvent(data string) (callID string, name string,
 								argsPiece = a
 							}
 						}
-						return callID, name, argsPiece
+						return callID, name, argsPiece, firstString(eventType, "chat.completions.chunk"), false
 					}
 				}
 			}
 		}
 	}
 
-	return "", "", ""
+	return "", "", "", eventType, false
 }
 
 func mergeArgsJSON(cur, piece string) string {

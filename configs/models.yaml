@@ -3,6 +3,9 @@ profiles:
   - name: "default"
     chat_model: "your-chat-model"
     responses_model: "your-responses-model"
-    reasoning_effort: "low"
-    temperature: 0
+    # Keep the generic template conservative. Add model-specific tuning only
+    # after the provider docs or a live reference run confirm it is supported.
+    # chat_max_tokens_param: "max_completion_tokens"
+    # reasoning_effort: "low"
+    # temperature: 0
     extra: {}

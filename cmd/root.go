@@ -30,6 +30,7 @@ func Execute() int {
 	modelsPath := fs.String("models", config.DefaultModelsPath, "Models config YAML")
 	endpointsPath := fs.String("endpoints", config.DefaultEndpointsPath, "Endpoints config YAML")
 	clientsPath := fs.String("clients", config.DefaultClientsPath, "Known clients compatibility YAML")
+	mode := fs.String("mode", config.ModeCompat, "Primary verdict mode: compat or strict")
 	profile := fs.String("profile", "", "Run only one model profile by name")
 	testIDs := fs.String("tests", "", "Comma-separated test IDs to run")
 	rerunFailuresFrom := fs.String("rerun-failures-from", "", "Path to raw.csv; rerun only FAIL/TIMEOUT tests from that report")
@@ -71,6 +72,7 @@ func Execute() int {
 		EndpointsPath: *endpointsPath,
 		ClientsPath:   *clientsPath,
 		EnvFile:       *envFile,
+		Mode:          *mode,
 		BaseURL:       *baseURL,
 		APIKey:        *apiKey,
 		Profile:       *profile,
@@ -173,7 +175,7 @@ func Execute() int {
 		}
 	}
 
-	if cfg.Suite.Analysis.Enabled && cfg.Suite.Analysis.FailOnFlaky && len(analysis.Flaky) > 0 {
+	if cfg.Suite.Analysis.Enabled && cfg.Suite.Analysis.FailOnFlaky && len(analysis.Compatibility.Flaky) > 0 {
 		return 1
 	}
 	if hasFailures(results) {

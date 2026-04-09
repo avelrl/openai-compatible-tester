@@ -39,6 +39,8 @@ type Result struct {
 	TestID               string
 	TestName             string
 	Status               Status
+	CompatStatus         Status
+	SpecStatus           Status
 	HTTPStatus           int
 	LatencyMS            int64
 	BytesIn              int64
@@ -46,6 +48,10 @@ type Result struct {
 	Tokens               int
 	ErrorType            string
 	ErrorMessage         string
+	CompatErrorType      string
+	CompatErrorMessage   string
+	SpecErrorType        string
+	SpecErrorMessage     string
 	Profile              string
 	Pass                 int
 	Attempts             int
@@ -54,10 +60,13 @@ type Result struct {
 	ResponseSnippet      string
 	TraceSteps           []TraceStep
 	ToolChoiceMode       string
+	EffectiveToolChoice  string
+	ToolChoiceFallback   bool
 	ReasoningEffort      string
 	LiteLLMTimeout       string
 	FunctionCallObserved bool
 	IsWarmup             bool
+	Evidence             *Evidence
 	snippetLimit         int
 }
 
@@ -152,6 +161,22 @@ func Registry() []TestCase {
 			Kind:          KindResponses,
 			RequiresTools: true,
 			Run:           runResponsesToolCallRequired,
+		},
+		{
+			ID:            "responses.custom_tool",
+			Name:          "Responses custom tool",
+			Category:      "responses",
+			Kind:          KindResponses,
+			RequiresTools: true,
+			Run:           runResponsesCustomTool,
+		},
+		{
+			ID:            "responses.custom_tool.grammar",
+			Name:          "Responses custom tool (grammar)",
+			Category:      "responses",
+			Kind:          KindResponses,
+			RequiresTools: true,
+			Run:           runResponsesCustomToolGrammar,
 		},
 		{
 			ID:       "responses.error_shape",
@@ -287,6 +312,26 @@ func effectiveInstructionRole(cfg config.Config, profile config.ModelProfile, te
 	return normalizeInstructionRole(defaultRole)
 }
 
+func shouldMergeInstructionIntoUser(cfg config.Config, profile config.ModelProfile, testID string) bool {
+	if ov, ok := testOverrideForProfile(cfg, profile, testID); ok && ov.MergeInstructionIntoUser != nil {
+		return *ov.MergeInstructionIntoUser
+	}
+	return false
+}
+
+func mergeInstructionAndUser(instruction, user string) string {
+	instruction = strings.TrimSpace(instruction)
+	user = strings.TrimSpace(user)
+	switch {
+	case instruction == "":
+		return user
+	case user == "":
+		return instruction
+	default:
+		return instruction + "\n\n" + user
+	}
+}
+
 func chatInstructionMessage(cfg config.Config, profile config.ModelProfile, testID, defaultRole, content string) map[string]string {
 	return map[string]string{
 		"role":    effectiveInstructionRole(cfg, profile, testID, defaultRole),
@@ -294,7 +339,26 @@ func chatInstructionMessage(cfg config.Config, profile config.ModelProfile, test
 	}
 }
 
+func chatMessagesWithInstruction(cfg config.Config, profile config.ModelProfile, testID, defaultRole, instruction, user string) []map[string]string {
+	if shouldMergeInstructionIntoUser(cfg, profile, testID) {
+		return []map[string]string{{
+			"role":    "user",
+			"content": mergeInstructionAndUser(instruction, user),
+		}}
+	}
+	return []map[string]string{
+		chatInstructionMessage(cfg, profile, testID, defaultRole, instruction),
+		{"role": "user", "content": user},
+	}
+}
+
 func responsesInputWithOptionalInstruction(cfg config.Config, profile config.ModelProfile, testID, defaultRole, instruction, user, plainFallback string) interface{} {
+	if shouldMergeInstructionIntoUser(cfg, profile, testID) {
+		return []map[string]string{{
+			"role":    "user",
+			"content": mergeInstructionAndUser(instruction, user),
+		}}
+	}
 	role := effectiveInstructionRole(cfg, profile, testID, defaultRole)
 	if role == "" {
 		return plainFallback
@@ -313,6 +377,12 @@ func responsesInputWithOptionalInstruction(cfg config.Config, profile config.Mod
 }
 
 func responsesInstructionInput(cfg config.Config, profile config.ModelProfile, testID, defaultRole, instruction, user string) []map[string]string {
+	if shouldMergeInstructionIntoUser(cfg, profile, testID) {
+		return []map[string]string{{
+			"role":    "user",
+			"content": mergeInstructionAndUser(instruction, user),
+		}}
+	}
 	role := effectiveInstructionRole(cfg, profile, testID, defaultRole)
 	return []map[string]string{
 		{"role": role, "content": instruction},
@@ -384,6 +454,20 @@ func chatMaxTokensOverride(ov config.TestOverride) *int {
 		return &mt
 	}
 	return nil
+}
+
+func chatMaxTokensParam(profile config.ModelProfile) string {
+	if param := strings.TrimSpace(profile.ChatMaxTokensParam); param != "" {
+		return param
+	}
+	return "max_tokens"
+}
+
+func applyChatMaxTokens(payload map[string]interface{}, profile config.ModelProfile, value int) {
+	if payload == nil || value <= 0 {
+		return
+	}
+	payload[chatMaxTokensParam(profile)] = value
 }
 
 func effectiveChatReasoningEffort(profile config.ModelProfile, suite config.SuiteConfig, ov config.TestOverride) string {
@@ -486,7 +570,7 @@ func runResponsesStoreGet(ctx context.Context, rc RunContext) Result {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
 	}
 	if isUnsupportedFeature(resp.Body) {
-		return unsupportedResult(result, "unknown_parameter", errorMessage(resp.Body))
+		return unsupportedFeatureResult(result, resp.Body)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return failHTTPStatusResult(result, resp)
@@ -526,6 +610,11 @@ func runResponsesStoreGet(ctx context.Context, rc RunContext) Result {
 		}
 		return failHTTPStatusResult(result, getResp)
 	}
+	result.HTTPStatus = getResp.StatusCode
+	result.LatencyMS = getResp.Latency.Milliseconds()
+	result.BytesIn = getResp.BytesIn
+	result.BytesOut = getResp.BytesOut
+	recordResponsesBodyEvidence(&result, getResp.Body)
 	if strings.TrimSpace(extractResponseText(getResp.Body)) == "" {
 		return failResult(result, errors.New("missing text"), "schema")
 	}
@@ -533,6 +622,7 @@ func runResponsesStoreGet(ctx context.Context, rc RunContext) Result {
 		return failResult(result, fmt.Errorf("id mismatch: %s != %s", gotID, id), "schema")
 	}
 	result.Status = StatusPass
+	result.Tokens = extractUsageTokens(getResp.Body)
 	return result
 }
 
@@ -617,6 +707,94 @@ func runResponsesToolCallRequired(ctx context.Context, rc RunContext) Result {
 	return runResponsesToolCallVariant(ctx, rc, "responses.tool_call.required", "Responses tool calling (required)", "required")
 }
 
+func runResponsesCustomTool(ctx context.Context, rc RunContext) Result {
+	return runResponsesCustomToolVariant(
+		ctx,
+		rc,
+		"responses.custom_tool",
+		"Responses custom tool",
+		responsesAddCustomTool("code_exec", "Executes arbitrary Python code"),
+		"Use the code_exec tool to print hello world to the console. Do not answer directly.",
+		"code_exec",
+		validateCustomToolFreeformInput,
+	)
+}
+
+func runResponsesCustomToolGrammar(ctx context.Context, rc RunContext) Result {
+	return runResponsesCustomToolVariant(
+		ctx,
+		rc,
+		"responses.custom_tool.grammar",
+		"Responses custom tool (grammar)",
+		responsesAddCustomToolWithGrammar("math_exp", "Creates valid mathematical expressions", "lark", responsesMathExpressionGrammar),
+		"Use the math_exp tool to add four plus four. Do not answer directly.",
+		"math_exp",
+		func(input string) error {
+			return validateMathExpressionToolInput(input, 8)
+		},
+	)
+}
+
+func runResponsesCustomToolVariant(ctx context.Context, rc RunContext, testID, name string, tool map[string]interface{}, prompt, expectedTool string, validateInput func(string) error) Result {
+	result := baseResult(testID, name, rc)
+	headers := requestHeadersForTest(rc.Config, rc.Profile, testID)
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, testID)
+	reasoningEffort := effectiveResponsesReasoningEffort(rc.Profile, ov)
+
+	payload := baseResponsesPayload(rc.Profile)
+	applyResponsesReasoningOverride(payload, reasoningEffort)
+	if maxOutputTokens := effectiveResponsesMaxOutputTokens(ov); maxOutputTokens != nil {
+		payload["max_output_tokens"] = *maxOutputTokens
+	}
+	result.ToolChoiceMode = "required"
+	result.ReasoningEffort = reasoningEffort
+	payload["tool_choice"] = "required"
+	payload["tools"] = []map[string]interface{}{tool}
+	payload["input"] = prompt
+
+	req := prettyJSON(payload)
+	result.RequestSnippet = clip(req, snippetLimit)
+	withTraceStep(&result, "request_custom_tool", req, "")
+
+	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, payload, headers)
+	if err != nil {
+		return failResult(result, err, "http_error")
+	}
+	result.HTTPStatus = resp.StatusCode
+	result.LatencyMS = resp.Latency.Milliseconds()
+	result.BytesIn = resp.BytesIn
+	result.BytesOut = resp.BytesOut
+	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	updateTraceStepResponse(&result, "request_custom_tool", string(resp.Body))
+	recordResponsesBodyEvidence(&result, resp.Body)
+
+	if isEndpointMissing(resp.StatusCode) {
+		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
+	}
+	if isUnsupportedFeature(resp.Body) {
+		return unsupportedFeatureResult(result, resp.Body)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return failHTTPStatusResult(result, resp)
+	}
+
+	_, actualTool, input := extractResponseCustomToolCall(resp.Body)
+	if strings.TrimSpace(actualTool) == "" {
+		return failResult(result, errors.New("missing custom tool call"), "tool_call")
+	}
+	ensureEvidence(&result).CanonicalCustomToolCallSeen = true
+	if actualTool != expectedTool {
+		return failResult(result, fmt.Errorf("unexpected custom tool name: %s", actualTool), "tool_call")
+	}
+	if err := validateInput(input); err != nil {
+		return failResult(result, err, "tool_call")
+	}
+
+	result.Status = StatusPass
+	result.Tokens = extractUsageTokens(resp.Body)
+	return result
+}
+
 func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, name, forcedMode string) Result {
 	result := baseResult(testID, name, rc)
 	headers := requestHeadersForTest(rc.Config, rc.Profile, testID)
@@ -633,7 +811,7 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 	if toolName == "" {
 		toolName = "add"
 	}
-	reasoningEffort := strings.TrimSpace(ov.ReasoningEffort)
+	reasoningEffort := effectiveResponsesReasoningEffort(rc.Profile, ov)
 	if reasoningEffort == "" {
 		reasoningEffort = "minimal"
 	}
@@ -659,6 +837,10 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 	switch mode {
 	case "forced":
 		payload["tool_choice"] = map[string]interface{}{"type": "function", "name": toolName}
+	case "forced_compat":
+		// Some OpenAI-compatible shims reject the object form of tool_choice
+		// but still honor "required" when exactly one tool is exposed.
+		payload["tool_choice"] = "required"
 	case "required":
 		payload["tool_choice"] = "required"
 	case "auto":
@@ -716,12 +898,19 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 			raw.WriteString(ev.Data)
 			raw.WriteString("\n")
 
-			id, _, argsPiece := parseResponsesToolCallStreamEvent(ev.Data)
+			id, _, argsPiece, eventType, canonical := parseResponsesToolCallStreamEventDetailed(ev.Data)
+			appendStreamEventType(&result, eventType)
 			if id != "" {
 				callID = id
 			}
 			if argsPiece != "" {
 				argsBuf = mergeArgsJSON(argsBuf, argsPiece)
+				if canonical {
+					ensureEvidence(&result).CanonicalStreamToolCallSeen = true
+					ensureEvidence(&result).CanonicalToolCallSeen = true
+				} else {
+					ensureEvidence(&result).FallbackChatToolCallOnResp = true
+				}
 			}
 			if callID != "" && isValidJSON(argsBuf) {
 				callArgs = argsBuf
@@ -742,12 +931,13 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 		step1RespText = raw.String()
 		result.ResponseSnippet = clip(step1RespText, snippetLimit)
 		updateTraceStepResponse(&result, "request_tool_call", step1RespText)
+		recordResponsesBodyEvidence(&result, resp.Body)
 
 		if isEndpointMissing(resp.StatusCode) {
 			return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
 		}
 		if resp.StatusCode >= 400 && isUnsupportedFeature(resp.Body) {
-			return unsupportedResult(result, "unknown_parameter", errorMessage(resp.Body))
+			return unsupportedFeatureResult(result, resp.Body)
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return failHTTPStatusResult(result, resp)
@@ -777,17 +967,22 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 		step1RespText = string(resp.Body)
 		result.ResponseSnippet = clip(step1RespText, snippetLimit)
 		updateTraceStepResponse(&result, "request_tool_call", step1RespText)
+		recordResponsesBodyEvidence(&result, resp.Body)
 
 		if isEndpointMissing(resp.StatusCode) {
 			return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
 		}
 		if isUnsupportedFeature(resp.Body) {
-			return unsupportedResult(result, "unknown_parameter", errorMessage(resp.Body))
+			return unsupportedFeatureResult(result, resp.Body)
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return failHTTPStatusResult(result, resp)
 		}
+		canonicalCallID, _ := extractCanonicalResponseFunctionCall(resp.Body)
 		callID, callArgs = extractResponseFunctionCall(resp.Body)
+		if callID != "" && canonicalCallID == "" {
+			ensureEvidence(&result).FallbackChatToolCallOnResp = true
+		}
 		if callID == "" {
 			return failResult(result, errors.New("missing function call"), "tool_call")
 		}
@@ -851,6 +1046,7 @@ func runResponsesErrorShape(ctx context.Context, rc RunContext) Result {
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
 	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	recordResponsesBodyEvidence(&result, resp.Body)
 	if isUnexpectedEndpointOrMethod(resp.Body) {
 		return unsupportedResult(result, "endpoint_missing", errorMessage(resp.Body))
 	}
@@ -981,10 +1177,9 @@ func runChatBasic(ctx context.Context, rc RunContext) Result {
 	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "chat.basic")
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
 	applyChatReasoningOverride(payload, effectiveChatReasoningEffort(rc.Profile, rc.Config.Suite, ov))
-	payload["messages"] = []map[string]string{
-		chatInstructionMessage(rc.Config, rc.Profile, "chat.basic", "developer", "Reply with exactly OK"),
-		{"role": "user", "content": "ping"},
-	}
+	instruction := overridePromptText(ov.InstructionText, "Reply with exactly OK")
+	userPrompt := overridePromptText(ov.UserText, "ping")
+	payload["messages"] = chatMessagesWithInstruction(rc.Config, rc.Profile, "chat.basic", "developer", instruction, userPrompt)
 	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Chat, payload, headers)
 	if err != nil {
@@ -1004,13 +1199,12 @@ func runChatStream(ctx context.Context, rc RunContext) Result {
 	result.ReasoningEffort = effectiveChatReasoningEffort(rc.Profile, rc.Config.Suite, ov)
 	applyChatReasoningOverride(payload, result.ReasoningEffort)
 	if maxTokens := chatMaxTokensOverride(ov); maxTokens != nil {
-		payload["max_tokens"] = *maxTokens
+		applyChatMaxTokens(payload, rc.Profile, *maxTokens)
 	}
 	payload["stream"] = true
-	payload["messages"] = []map[string]string{
-		chatInstructionMessage(rc.Config, rc.Profile, "chat.stream", "developer", "Reply with exactly HELLO and nothing else. Stream it one character at a time."),
-		{"role": "user", "content": "go"},
-	}
+	instruction := overridePromptText(ov.InstructionText, "Reply with exactly HELLO and nothing else. Stream it one character at a time.")
+	userPrompt := overridePromptText(ov.UserText, "go")
+	payload["messages"] = chatMessagesWithInstruction(rc.Config, rc.Profile, "chat.stream", "developer", instruction, userPrompt)
 	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
 	var text strings.Builder
 	var raw strings.Builder
@@ -1021,9 +1215,11 @@ func runChatStream(ctx context.Context, rc RunContext) Result {
 		}
 		raw.WriteString(ev.Data)
 		raw.WriteString("\n")
+		appendStreamEventType(&result, "chat.completions.chunk")
 		delta, isDone := parseChatStreamEvent(ev.Data)
 		if delta != "" {
 			text.WriteString(delta)
+			ensureEvidence(&result).CanonicalStreamTextSeen = true
 			if normalizeStreamText(text.String()) == "HELLO" {
 				done = true
 				return sse.ErrStop
@@ -1044,11 +1240,12 @@ func runChatStream(ctx context.Context, rc RunContext) Result {
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
 	result.ResponseSnippet = clip("SSE:\n"+raw.String()+"\nTEXT:\n"+text.String(), snippetLimit)
+	recordChatBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
 	}
 	if isUnsupportedFeature(resp.Body) {
-		return unsupportedResult(result, "unknown_parameter", errorMessage(resp.Body))
+		return unsupportedFeatureResult(result, resp.Body)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return failHTTPStatusResult(result, resp)
@@ -1118,6 +1315,10 @@ func runChatToolCallVariant(ctx context.Context, rc RunContext, testID, name, fo
 				"name": toolName,
 			},
 		}
+	case "forced_compat":
+		// Some OpenAI-compatible shims reject the object form of tool_choice
+		// but still honor "required" when exactly one tool is exposed.
+		payload["tool_choice"] = "required"
 	case "required":
 		payload["tool_choice"] = "required"
 	case "auto":
@@ -1131,7 +1332,7 @@ func runChatToolCallVariant(ctx context.Context, rc RunContext, testID, name, fo
 		}
 	}
 	payload["parallel_tool_calls"] = parallel
-	payload["max_tokens"] = maxTokens
+	applyChatMaxTokens(payload, rc.Profile, maxTokens)
 	payload["tools"] = []map[string]interface{}{chatAddTool(toolName, strict)}
 	payload["messages"] = []map[string]string{{"role": "user", "content": step1Prompt}}
 	step1Req := prettyJSON(payload)
@@ -1149,11 +1350,12 @@ func runChatToolCallVariant(ctx context.Context, rc RunContext, testID, name, fo
 	step1RespText := string(resp.Body)
 	result.ResponseSnippet = clip(step1RespText, snippetLimit)
 	updateTraceStepResponse(&result, "request_tool_call", step1RespText)
+	recordChatBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
 	}
 	if isUnsupportedFeature(resp.Body) {
-		return unsupportedResult(result, "unknown_parameter", errorMessage(resp.Body))
+		return unsupportedFeatureResult(result, resp.Body)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return failHTTPStatusResult(result, resp)
@@ -1162,6 +1364,7 @@ func runChatToolCallVariant(ctx context.Context, rc RunContext, testID, name, fo
 	if callID == "" {
 		return failResult(result, errors.New("missing tool call"), "tool_call")
 	}
+	ensureEvidence(&result).CanonicalToolCallSeen = true
 	if err := validateAddToolCallArgs(callArgs, 40, 2); err != nil {
 		return failResult(result, err, "tool_call")
 	}
@@ -1170,7 +1373,7 @@ func runChatToolCallVariant(ctx context.Context, rc RunContext, testID, name, fo
 	payload2 := baseChatPayload(rc.Profile, rc.Config.Suite)
 	applyChatReasoningOverride(payload2, result.ReasoningEffort)
 	payload2["parallel_tool_calls"] = parallel
-	payload2["max_tokens"] = maxTokens
+	applyChatMaxTokens(payload2, rc.Profile, maxTokens)
 	payload2["tools"] = payload["tools"]
 	payload2["messages"] = []interface{}{
 		map[string]interface{}{"role": "user", "content": step1Prompt},
@@ -1215,6 +1418,7 @@ func runChatErrorShape(ctx context.Context, rc RunContext) Result {
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
 	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	recordChatBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
 	}
@@ -1259,14 +1463,11 @@ func runChatStructuredSchema(ctx context.Context, rc RunContext) Result {
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
 	applyChatReasoningOverride(payload, effectiveChatReasoningEffort(rc.Profile, rc.Config.Suite, ov))
 	if maxTokens := chatMaxTokensOverride(ov); maxTokens != nil {
-		payload["max_tokens"] = *maxTokens
+		applyChatMaxTokens(payload, rc.Profile, *maxTokens)
 	}
 	instruction := overridePromptText(ov.InstructionText, "Return JSON strictly according to the schema.")
 	userPrompt := overridePromptText(ov.UserText, "Generate an object with status=\"ok\" and value=42.")
-	payload["messages"] = []map[string]string{
-		chatInstructionMessage(rc.Config, rc.Profile, "chat.structured.json_schema", "system", instruction),
-		{"role": "user", "content": userPrompt},
-	}
+	payload["messages"] = chatMessagesWithInstruction(rc.Config, rc.Profile, "chat.structured.json_schema", "system", instruction, userPrompt)
 	payload["response_format"] = map[string]interface{}{
 		"type": "json_schema",
 		"json_schema": map[string]interface{}{
@@ -1299,14 +1500,11 @@ func runChatStructuredObject(ctx context.Context, rc RunContext) Result {
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
 	applyChatReasoningOverride(payload, effectiveChatReasoningEffort(rc.Profile, rc.Config.Suite, ov))
 	if maxTokens := chatMaxTokensOverride(ov); maxTokens != nil {
-		payload["max_tokens"] = *maxTokens
+		applyChatMaxTokens(payload, rc.Profile, *maxTokens)
 	}
 	instruction := overridePromptText(ov.InstructionText, "You output JSON only.")
 	userPrompt := overridePromptText(ov.UserText, "Return JSON like {\"ok\":true}.")
-	payload["messages"] = []map[string]string{
-		chatInstructionMessage(rc.Config, rc.Profile, "chat.structured.json_object", "system", instruction),
-		{"role": "user", "content": userPrompt},
-	}
+	payload["messages"] = chatMessagesWithInstruction(rc.Config, rc.Profile, "chat.structured.json_object", "system", instruction, userPrompt)
 	payload["response_format"] = map[string]interface{}{
 		"type": "json_object",
 	}
@@ -1345,13 +1543,18 @@ func handleResponsesTextResultMatch(result Result, resp *httpclient.Response, ex
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
 	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	recordResponsesBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return failHTTPStatusResult(result, resp)
 	}
+	canonicalText := extractCanonicalResponseText(resp.Body)
 	text := extractResponseText(resp.Body)
+	if canonicalText == "" && text != "" {
+		ensureEvidence(&result).FallbackChatShapeOnResponses = true
+	}
 	if text == "" {
 		return failResult(result, errors.New("missing text"), "schema")
 	}
@@ -1377,6 +1580,7 @@ func handleChatTextResultMatch(result Result, resp *httpclient.Response, expecte
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
 	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	recordChatBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
 	}
@@ -1401,21 +1605,29 @@ func handleStructuredResponse(result Result, resp *httpclient.Response, strictSc
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
 	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	recordResponsesBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
 	}
 	if isUnsupportedFeature(resp.Body) {
-		return unsupportedResult(result, "unknown_parameter", errorMessage(resp.Body))
+		return unsupportedFeatureResult(result, resp.Body)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return failHTTPStatusResult(result, resp)
 	}
+	canonicalText := extractCanonicalResponseText(resp.Body)
 	text := extractResponseText(resp.Body)
+	if canonicalText == "" && text != "" {
+		ensureEvidence(&result).FallbackChatShapeOnResponses = true
+	}
 	if text == "" {
 		return failResult(result, errors.New("missing text"), "schema")
 	}
 	if !isValidStructured(text, strictSchema) {
 		return failResult(result, errors.New("invalid structured json"), "schema")
+	}
+	if strings.TrimSpace(canonicalText) != "" && isValidStructured(canonicalText, strictSchema) {
+		ensureEvidence(&result).CanonicalStructuredSeen = true
 	}
 	result.Status = StatusPass
 	return result
@@ -1427,11 +1639,12 @@ func handleStructuredChat(result Result, resp *httpclient.Response, strictSchema
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
 	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	recordChatBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
 	}
 	if isUnsupportedFeature(resp.Body) {
-		return unsupportedResult(result, "unknown_parameter", errorMessage(resp.Body))
+		return unsupportedFeatureResult(result, resp.Body)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return failHTTPStatusResult(result, resp)
@@ -1443,6 +1656,7 @@ func handleStructuredChat(result Result, resp *httpclient.Response, strictSchema
 	if !isValidStructured(text, strictSchema) {
 		return failResult(result, errors.New("invalid structured json"), "schema")
 	}
+	ensureEvidence(&result).CanonicalStructuredSeen = true
 	result.Status = StatusPass
 	return result
 }
@@ -1481,7 +1695,22 @@ func unsupportedResult(result Result, errType, msg string) Result {
 	result.Status = StatusUnsupported
 	result.ErrorType = errType
 	result.ErrorMessage = msg
+	if errType == "endpoint_missing" || errType == "unsupported_get" {
+		ev := ensureEvidence(&result)
+		ev.StrictUnsupported = true
+		ev.StrictUnsupportedReason = strings.TrimSpace(msg)
+	}
 	return result
+}
+
+func unsupportedFeatureResult(result Result, body []byte) Result {
+	recordErrorEvidence(&result, body)
+	if isStrictUnsupportedFeature(body) {
+		ev := ensureEvidence(&result)
+		ev.StrictUnsupported = true
+		ev.StrictUnsupportedReason = strings.TrimSpace(errorMessage(body))
+	}
+	return unsupportedResult(result, "unknown_parameter", errorMessage(body))
 }
 
 func failResult(result Result, err error, errType string) Result {
@@ -1677,6 +1906,30 @@ func isUnknownParam(body []byte) bool {
 		strings.Contains(msg, "got an unexpected keyword argument")
 }
 
+func isStrictUnsupportedFeature(body []byte) bool {
+	msg := strings.ToLower(errorMessage(body))
+	if msg == "" {
+		return isStoreUnsupported(body)
+	}
+	return strings.Contains(msg, "unknown parameter") ||
+		strings.Contains(msg, "unsupported parameter") ||
+		strings.Contains(msg, "unsupported value") ||
+		strings.Contains(msg, "grammar-constrained custom tools are not supported in bridge mode") ||
+		strings.Contains(msg, "unknown field") ||
+		strings.Contains(msg, "extra fields not permitted") ||
+		strings.Contains(msg, "unexpected keyword argument") ||
+		strings.Contains(msg, "got an unexpected keyword argument") ||
+		strings.Contains(msg, "invalid tool_choice type") ||
+		strings.Contains(msg, "supported string values: none, auto, required") ||
+		strings.Contains(msg, "expected 'none' | 'auto' | 'required'") ||
+		strings.Contains(msg, "of tool must be 'function'") ||
+		strings.Contains(msg, "of tool must be \"function\"") ||
+		strings.Contains(msg, "'response_format.type' must be 'json_schema' or 'text'") ||
+		strings.Contains(msg, "\"response_format.type\" must be \"json_schema\" or \"text\"") ||
+		strings.Contains(msg, "input should be 'text' or 'json_object'") ||
+		isStoreUnsupported(body)
+}
+
 func isUnsupportedFeature(body []byte) bool {
 	msg := strings.ToLower(errorMessage(body))
 	if msg == "" {
@@ -1686,8 +1939,11 @@ func isUnsupportedFeature(body []byte) bool {
 		return true
 	}
 	return strings.Contains(msg, "invalid tool_choice type") ||
+		strings.Contains(msg, "grammar-constrained custom tools are not supported in bridge mode") ||
 		strings.Contains(msg, "supported string values: none, auto, required") ||
 		strings.Contains(msg, "expected 'none' | 'auto' | 'required'") ||
+		strings.Contains(msg, "of tool must be 'function'") ||
+		strings.Contains(msg, "of tool must be \"function\"") ||
 		strings.Contains(msg, "'response_format.type' must be 'json_schema' or 'text'") ||
 		strings.Contains(msg, "\"response_format.type\" must be \"json_schema\" or \"text\"") ||
 		strings.Contains(msg, "input should be 'text' or 'json_object'") ||
@@ -1713,6 +1969,125 @@ func responsesAddTool(toolName string, strict bool) map[string]interface{} {
 		tool["strict"] = true
 	}
 	return tool
+}
+
+func responsesAddCustomTool(toolName, description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "custom",
+		"name":        toolName,
+		"description": description,
+	}
+}
+
+func responsesAddCustomToolWithGrammar(toolName, description, syntax, definition string) map[string]interface{} {
+	tool := responsesAddCustomTool(toolName, description)
+	tool["format"] = map[string]interface{}{
+		"type":       "grammar",
+		"syntax":     syntax,
+		"definition": definition,
+	}
+	return tool
+}
+
+const responsesMathExpressionGrammar = `
+start: expr
+expr: term (SP ADD SP term)* -> add
+    | term
+term: factor (SP MUL SP factor)* -> mul
+    | factor
+factor: INT
+SP: " "
+ADD: "+"
+MUL: "*"
+%import common.INT
+`
+
+func validateCustomToolFreeformInput(input string) error {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return errors.New("missing custom tool input")
+	}
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return fmt.Errorf("custom tool input must be plain text, got %q", trimmed)
+	}
+	lower := strings.ToLower(trimmed)
+	if !strings.Contains(lower, "print") || !strings.Contains(lower, "hello world") {
+		return fmt.Errorf("unexpected custom tool input: %q", trimmed)
+	}
+	return nil
+}
+
+func validateMathExpressionToolInput(input string, want int) error {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return errors.New("missing custom tool input")
+	}
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return fmt.Errorf("custom tool input must be plain text, got %q", trimmed)
+	}
+	got, err := evalSimpleMathExpression(trimmed)
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return fmt.Errorf("unexpected math expression result: got %d want %d", got, want)
+	}
+	return nil
+}
+
+func evalSimpleMathExpression(input string) (int, error) {
+	trimmed := strings.TrimSpace(input)
+	if trimmed == "" {
+		return 0, errors.New("empty math expression")
+	}
+	if looksLikeCompactMathExpression(trimmed) {
+		return 0, fmt.Errorf("math expression must use single spaces between tokens: %q", trimmed)
+	}
+	tokens := strings.Fields(trimmed)
+	if len(tokens)%2 == 0 {
+		return 0, fmt.Errorf("invalid math expression syntax: %q", trimmed)
+	}
+	normalized := strings.Join(tokens, " ")
+	if normalized != trimmed {
+		return 0, fmt.Errorf("math expression must use single spaces between tokens: %q", trimmed)
+	}
+
+	current, err := strconv.Atoi(tokens[0])
+	if err != nil {
+		return 0, fmt.Errorf("invalid integer %q", tokens[0])
+	}
+	sum := 0
+	for i := 1; i < len(tokens); i += 2 {
+		op := tokens[i]
+		next, err := strconv.Atoi(tokens[i+1])
+		if err != nil {
+			return 0, fmt.Errorf("invalid integer %q", tokens[i+1])
+		}
+		switch op {
+		case "*":
+			current *= next
+		case "+":
+			sum += current
+			current = next
+		default:
+			return 0, fmt.Errorf("unsupported operator %q", op)
+		}
+	}
+	return sum + current, nil
+}
+
+func looksLikeCompactMathExpression(input string) bool {
+	hasOperator := false
+	for _, r := range input {
+		switch {
+		case r >= '0' && r <= '9':
+		case r == '+' || r == '*':
+			hasOperator = true
+		default:
+			return false
+		}
+	}
+	return hasOperator
 }
 
 func chatAddTool(toolName string, strict bool) map[string]interface{} {
@@ -1957,84 +2332,41 @@ func extractPreviousResponseID(body []byte) string {
 }
 
 func extractResponseText(body []byte) string {
-	var doc map[string]interface{}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return ""
-	}
-	if text, ok := doc["output_text"].(string); ok {
+	if text := extractCanonicalResponseText(body); text != "" {
 		return text
 	}
-	var parts []string
-	if out, ok := doc["output"].([]interface{}); ok {
-		for _, item := range out {
-			m, _ := item.(map[string]interface{})
-			if m == nil {
-				continue
-			}
-			if t, _ := m["type"].(string); t == "output_text" {
-				if text, ok := m["text"].(string); ok {
-					parts = append(parts, text)
-				}
-				continue
-			}
-			if t, _ := m["type"].(string); t == "message" {
-				if content, ok := m["content"].([]interface{}); ok {
-					for _, c := range content {
-						cm, _ := c.(map[string]interface{})
-						if cm == nil {
-							continue
-						}
-						if t, _ := cm["type"].(string); t == "output_text" || t == "text" {
-							if text, ok := cm["text"].(string); ok {
-								parts = append(parts, text)
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	if len(parts) > 0 {
-		return strings.Join(parts, "")
-	}
-	if content, ok := doc["content"]; ok {
-		if text := extractTextFromContent(content); text != "" {
-			return text
-		}
-	}
-	if msg, ok := doc["message"].(map[string]interface{}); ok {
-		if text := extractTextFromContent(msg["content"]); text != "" {
-			return text
-		}
-	}
-	if text := extractChatContent(body); text != "" {
-		return text
-	}
-	return ""
+	return extractChatContent(body)
 }
 
 func extractResponseFunctionCall(body []byte) (string, string) {
+	if callID, args := extractCanonicalResponseFunctionCall(body); callID != "" {
+		return callID, args
+	}
+	return extractChatToolCall(body)
+}
+
+func extractResponseCustomToolCall(body []byte) (string, string, string) {
 	var doc map[string]interface{}
 	if err := json.Unmarshal(body, &doc); err != nil {
-		return "", ""
+		return "", "", ""
 	}
 	out, ok := doc["output"].([]interface{})
-	if ok {
-		for _, item := range out {
-			m, _ := item.(map[string]interface{})
-			if m == nil {
-				continue
-			}
-			if t, _ := m["type"].(string); t == "function_call" {
-				callID := firstString(m["call_id"], m["id"])
-				args := anyToString(m["arguments"])
-				return callID, args
-			}
+	if !ok {
+		return "", "", ""
+	}
+	for _, item := range out {
+		m, _ := item.(map[string]interface{})
+		if m == nil {
+			continue
+		}
+		if t, _ := m["type"].(string); t == "custom_tool_call" {
+			callID := firstString(m["call_id"], m["id"])
+			name := firstString(m["name"])
+			input := anyToString(m["input"])
+			return callID, name, input
 		}
 	}
-	// Fallback: some proxies return a Chat Completions-shaped payload on /responses.
-	callID, args := extractChatToolCall(body)
-	return callID, args
+	return "", "", ""
 }
 
 func extractResponseFunctionCallItem(body []byte) map[string]interface{} {
@@ -2341,55 +2673,59 @@ func parseChatStreamEvent(data string) (string, bool) {
 }
 
 func parseResponsesStreamEvent(data string) (string, bool) {
+	delta, done, _, _ := parseResponsesStreamEventDetailed(data)
+	return delta, done
+}
+
+func parseResponsesStreamEventDetailed(data string) (string, bool, bool, string) {
 	if strings.TrimSpace(data) == "[DONE]" {
-		return "", true
+		return "", true, false, "[DONE]"
 	}
 	var doc map[string]interface{}
 	if err := json.Unmarshal([]byte(data), &doc); err != nil {
-		return "", false
+		return "", false, false, ""
 	}
 	if t, ok := doc["type"].(string); ok {
 		switch t {
 		case "response.completed":
-			return "", true
+			return "", true, true, t
 		case "response.output_text.delta":
 			if delta, ok := doc["delta"].(string); ok {
-				return delta, false
+				return delta, false, true, t
 			}
 		case "response.output_text.done":
 			if text, ok := doc["text"].(string); ok {
-				return text, true
+				return text, true, true, t
 			}
-			return "", true
+			return "", true, true, t
 		case "response.content_part.added":
 			part, _ := doc["part"].(map[string]interface{})
 			if part == nil {
-				return "", false
+				return "", false, false, t
 			}
 			if partType, _ := part["type"].(string); partType != "output_text" {
-				return "", false
+				return "", false, false, t
 			}
 			if text, ok := part["text"].(string); ok {
-				return text, false
+				return text, false, true, t
 			}
-			return "", false
+			return "", false, true, t
 		default:
-			// Ignore reasoning and non-text events when validating streamed user-visible output.
-			return "", false
+			return "", false, false, t
 		}
 	}
 	if delta, ok := doc["delta"].(map[string]interface{}); ok {
 		if text, ok := delta["text"].(string); ok {
-			return text, false
+			return text, false, false, "fallback.delta_text"
 		}
 	}
 	if delta, ok := doc["delta"].(string); ok {
-		return delta, false
+		return delta, false, false, "fallback.delta"
 	}
 	if text, ok := doc["text"].(string); ok {
-		return text, false
+		return text, false, false, "fallback.text"
 	}
-	return "", false
+	return "", false, false, ""
 }
 
 // runResponsesStream implemented after helper to avoid forward ref
@@ -2416,9 +2752,15 @@ func runResponsesStream(ctx context.Context, rc RunContext) Result {
 		}
 		raw.WriteString(ev.Data)
 		raw.WriteString("\n")
-		delta, isDone := parseResponsesStreamEvent(ev.Data)
+		delta, isDone, canonical, eventType := parseResponsesStreamEventDetailed(ev.Data)
+		appendStreamEventType(&result, eventType)
 		if delta != "" {
 			text.WriteString(delta)
+			if canonical {
+				ensureEvidence(&result).CanonicalStreamTextSeen = true
+			} else {
+				ensureEvidence(&result).FallbackStreamTextSeen = true
+			}
 			if normalizeStreamText(text.String()) == "HELLO" {
 				done = true
 				return sse.ErrStop
@@ -2439,11 +2781,12 @@ func runResponsesStream(ctx context.Context, rc RunContext) Result {
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
 	result.ResponseSnippet = clip("SSE:\n"+raw.String()+"\nTEXT:\n"+text.String(), snippetLimit)
+	recordResponsesBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
 	}
 	if isUnsupportedFeature(resp.Body) {
-		return unsupportedResult(result, "unknown_parameter", errorMessage(resp.Body))
+		return unsupportedFeatureResult(result, resp.Body)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return failHTTPStatusResult(result, resp)

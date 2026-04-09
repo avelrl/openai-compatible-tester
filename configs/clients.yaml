@@ -8,6 +8,7 @@ targets:
     docs_url: "https://developers.openai.com/codex/config-reference/"
     notes:
       - "Custom providers in Codex use the Responses API."
+      - "Codex may rely on non-function Responses tool types; function-only tool validation is not sufficient."
     modes:
       - name: responses
         api: responses
@@ -18,7 +19,9 @@ targets:
           - responses.basic
           - responses.stream
           - responses.tool_call.required
+          - responses.custom_tool
         optional_tests:
+          - responses.custom_tool.grammar
           - responses.structured.json_schema
           - responses.error_shape
         unsupported_ok:

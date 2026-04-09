@@ -56,6 +56,12 @@ tests:
     parallel_tool_calls: false
     reasoning_effort: minimal
     strict_mode: false
+  responses.custom_tool:
+    timeout_seconds: 60
+    reasoning_effort: minimal
+  responses.custom_tool.grammar:
+    timeout_seconds: 60
+    reasoning_effort: minimal
   chat.tool_call:
     timeout_seconds: 60
     tool_choice_mode: forced

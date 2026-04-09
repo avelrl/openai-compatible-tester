@@ -20,6 +20,8 @@ const (
 	DefaultModelsPath    = "configs/models.yaml"
 	DefaultEndpointsPath = "configs/endpoints.yaml"
 	DefaultClientsPath   = "configs/clients.yaml"
+	ModeCompat           = "compat"
+	ModeStrict           = "strict"
 )
 
 type Config struct {
@@ -62,6 +64,7 @@ type ModelProfile struct {
 	Name               string                  `yaml:"name"`
 	ChatModel          string                  `yaml:"chat_model"`
 	ResponsesModel     string                  `yaml:"responses_model"`
+	ChatMaxTokensParam string                  `yaml:"chat_max_tokens_param"`
 	ReasoningEffort    string                  `yaml:"reasoning_effort"`
 	Temperature        *float64                `yaml:"temperature"`
 	RateLimitPerMinute int                     `yaml:"rate_limit_per_minute"`
@@ -70,6 +73,7 @@ type ModelProfile struct {
 }
 
 type SuiteConfig struct {
+	Mode              string                  `yaml:"mode"`
 	Passes            int                     `yaml:"passes"`
 	WarmupPasses      int                     `yaml:"warmup_passes"`
 	Parallelism       int                     `yaml:"parallelism"`
@@ -145,15 +149,16 @@ type TestOverride struct {
 
 	// InstructionRole overrides the role used for the leading instruction message
 	// in chat tests that separate instruction from user input.
-	InstructionRole string `yaml:"instruction_role"` // developer|system|user
-	InstructionText string `yaml:"instruction_text"`
-	UserText        string `yaml:"user_text"`
+	InstructionRole          string `yaml:"instruction_role"` // developer|system|user
+	InstructionText          string `yaml:"instruction_text"`
+	UserText                 string `yaml:"user_text"`
+	MergeInstructionIntoUser *bool  `yaml:"merge_instruction_into_user"`
 
 	// Tool calling knobs (used by tool_call tests).
-	ToolChoiceMode    string `yaml:"tool_choice_mode"` // forced|required|auto
+	ToolChoiceMode    string `yaml:"tool_choice_mode"` // forced|forced_compat|required|auto
 	ForcedToolName    string `yaml:"forced_tool_name"`
 	ParallelToolCalls *bool  `yaml:"parallel_tool_calls"`
-	ReasoningEffort   string `yaml:"reasoning_effort"`  // minimal|low|medium|high|omit
+	ReasoningEffort   string `yaml:"reasoning_effort"`  // minimal|low|medium|high|none|omit
 	MaxOutputTokens   *int   `yaml:"max_output_tokens"` // Responses
 	MaxTokens         *int   `yaml:"max_tokens"`        // Chat
 	StrictMode        *bool  `yaml:"strict_mode"`
@@ -187,6 +192,7 @@ type LoadOptions struct {
 	EndpointsPath string
 	ClientsPath   string
 	EnvFile       string
+	Mode          string
 
 	BaseURL    string
 	APIKey     string
@@ -282,6 +288,9 @@ func Load(opts LoadOptions) (Config, error) {
 	cfg.NoStream = opts.NoStream
 	cfg.AnalyzeOverride = opts.Analyze
 	cfg.Verbose = opts.Verbose
+	if strings.TrimSpace(opts.Mode) != "" {
+		cfg.Suite.Mode = strings.ToLower(strings.TrimSpace(opts.Mode))
+	}
 
 	if opts.Passes > 0 {
 		cfg.Suite.Passes = opts.Passes
@@ -309,6 +318,9 @@ func Load(opts LoadOptions) (Config, error) {
 }
 
 func applyDefaults(cfg *Config) {
+	if strings.TrimSpace(cfg.Suite.Mode) == "" {
+		cfg.Suite.Mode = ModeCompat
+	}
 	if cfg.Endpoints.Paths.Models == "" {
 		cfg.Endpoints.Paths.Models = "/v1/models"
 	}
@@ -408,6 +420,13 @@ func (c Config) Validate() error {
 		if p.RateLimitPerMinute < 0 {
 			return fmt.Errorf("models.yaml: rate_limit_per_minute must be >= 0 for profile %s", p.Name)
 		}
+		if param := strings.TrimSpace(p.ChatMaxTokensParam); param != "" {
+			switch param {
+			case "max_tokens", "max_completion_tokens":
+			default:
+				return fmt.Errorf("models.yaml: chat_max_tokens_param must be max_tokens or max_completion_tokens for profile %s", p.Name)
+			}
+		}
 		if p.Extra == nil {
 			p.Extra = map[string]interface{}{}
 		}
@@ -419,6 +438,11 @@ func (c Config) Validate() error {
 	}
 	if c.Suite.Passes <= 0 {
 		return errors.New("suite.yaml: passes must be > 0")
+	}
+	switch strings.TrimSpace(c.Suite.Mode) {
+	case ModeCompat, ModeStrict:
+	default:
+		return errors.New("suite.yaml: mode must be compat or strict")
 	}
 	if c.Suite.WarmupPasses < 0 {
 		return errors.New("suite.yaml: warmup_passes must be >= 0")
@@ -481,9 +505,9 @@ func validateTestOverride(scope, testID string, t TestOverride) error {
 	}
 	if mode := strings.TrimSpace(t.ToolChoiceMode); mode != "" {
 		switch mode {
-		case "forced", "required", "auto":
+		case "forced", "forced_compat", "required", "auto":
 		default:
-			return fmt.Errorf("%s.tool_choice_mode must be one of forced|required|auto", scope)
+			return fmt.Errorf("%s.tool_choice_mode must be one of forced|forced_compat|required|auto", scope)
 		}
 	}
 	if role := strings.ToLower(strings.TrimSpace(t.InstructionRole)); role != "" {
@@ -495,9 +519,9 @@ func validateTestOverride(scope, testID string, t TestOverride) error {
 	}
 	if eff := strings.TrimSpace(t.ReasoningEffort); eff != "" {
 		switch eff {
-		case "minimal", "low", "medium", "high", "omit":
+		case "minimal", "low", "medium", "high", "none", "omit":
 		default:
-			return fmt.Errorf("%s.reasoning_effort must be one of minimal|low|medium|high|omit", scope)
+			return fmt.Errorf("%s.reasoning_effort must be one of minimal|low|medium|high|none|omit", scope)
 		}
 	}
 	return nil
