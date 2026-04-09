@@ -65,7 +65,7 @@ func deriveSpecOutcome(res Result) (Status, string, string) {
 	case StatusTimeout:
 		return compatStatus, compatType, compatMsg
 	case StatusUnsupported:
-		if ev != nil && ev.StrictUnsupported {
+		if ev != nil && ev.StrictUnsupported && hasCanonicalErrorObject(ev) {
 			return compatStatus, compatType, compatMsg
 		}
 		if compatType == "endpoint_missing" || compatType == "unsupported_get" {
@@ -84,7 +84,7 @@ func deriveSpecOutcome(res Result) (Status, string, string) {
 
 	switch res.TestID {
 	case "chat.error_shape", "responses.error_shape":
-		if ev != nil && ev.ErrorObjectSeen && ev.ErrorMessageSeen && ev.ErrorTypeSeen && res.HTTPStatus >= 400 && res.HTTPStatus < 500 {
+		if hasCanonicalErrorObject(ev) && res.HTTPStatus >= 400 && res.HTTPStatus < 500 {
 			return StatusPass, "", ""
 		}
 		return StatusFail, "spec_violation", "missing canonical OpenAI error object"
@@ -140,6 +140,10 @@ func hasCanonicalBasicText(res Result) bool {
 	default:
 		return false
 	}
+}
+
+func hasCanonicalErrorObject(ev *Evidence) bool {
+	return ev != nil && ev.ErrorObjectSeen && ev.ErrorMessageSeen && ev.ErrorTypeSeen
 }
 
 func isExactnessOnlyFailureResult(res Result) bool {

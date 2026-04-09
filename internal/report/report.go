@@ -30,10 +30,11 @@ type Analysis struct {
 }
 
 type SpecAnalysis struct {
-	SurfaceReadiness []AgentReadiness   `json:"surface_readiness"`
-	Stats            []TestStats        `json:"stats"`
-	Unsupported      []Incompatibility  `json:"unsupported"`
-	Violations       []Incompatibility  `json:"violations"`
+	SurfaceReadiness []AgentReadiness  `json:"surface_readiness"`
+	Stats            []TestStats       `json:"stats"`
+	Flaky            []TestStats       `json:"flaky"`
+	Unsupported      []Incompatibility `json:"unsupported"`
+	Violations       []Incompatibility `json:"violations"`
 }
 
 type CompatibilityAnalysis struct {
@@ -264,6 +265,8 @@ func WriteSummaryMarkdown(outDir string, summary Summary, analysis Analysis) err
 	writeAgentReadiness(f, analysis.Spec.SurfaceReadiness)
 	fmt.Fprintf(f, "_Stats_\n\n")
 	writeStats(f, analysis.Spec.Stats)
+	fmt.Fprintf(f, "\n_Flakiness_\n\n")
+	writeFlakiness(f, analysis.Spec.Flaky)
 	fmt.Fprintf(f, "\n_Supported/unsupported surface gaps_\n\n")
 	writeUnsupported(f, analysis.Spec.Unsupported)
 	fmt.Fprintf(f, "\n_Top spec violations_\n\n")
@@ -332,12 +335,7 @@ func Analyze(results []tests.Result, cfg config.Config) Analysis {
 	strictResults := projectResults(results, config.ModeStrict)
 
 	compatStats := buildStats(compatResults, cfg)
-	flaky := make([]TestStats, 0)
-	for _, s := range compatStats {
-		if s.Total > 1 && s.Passes > 0 && s.PassRate < 1.0 {
-			flaky = append(flaky, s)
-		}
-	}
+	compatFlaky := buildFlaky(compatStats)
 	compatUnsupported := buildUnsupported(compatResults)
 	compatIncompat := buildIncompat(compatResults)
 	sanitySkips := buildSanitySkips(compatResults)
@@ -346,6 +344,7 @@ func Analyze(results []tests.Result, cfg config.Config) Analysis {
 	basicExactness := buildBasicExactness(compatResults)
 
 	specStats := buildStats(strictResults, cfg)
+	specFlaky := buildFlaky(specStats)
 	specUnsupported := buildUnsupported(strictResults)
 	specViolations := buildIncompat(strictResults)
 	specReadiness := buildAgentReadiness(strictResults, cfg)
@@ -354,6 +353,7 @@ func Analyze(results []tests.Result, cfg config.Config) Analysis {
 		Spec: SpecAnalysis{
 			SurfaceReadiness: specReadiness,
 			Stats:            specStats,
+			Flaky:            specFlaky,
 			Unsupported:      specUnsupported,
 			Violations:       specViolations,
 		},
@@ -362,12 +362,22 @@ func Analyze(results []tests.Result, cfg config.Config) Analysis {
 			ClientCompat:   clientCompat,
 			BasicExactness: basicExactness,
 			Stats:          compatStats,
-			Flaky:          flaky,
+			Flaky:          compatFlaky,
 			Unsupported:    compatUnsupported,
 			Incompat:       compatIncompat,
 			SanitySkips:    sanitySkips,
 		},
 	}
+}
+
+func buildFlaky(stats []TestStats) []TestStats {
+	flaky := make([]TestStats, 0)
+	for _, s := range stats {
+		if s.Total > 1 && s.Passes > 0 && s.PassRate < 1.0 {
+			flaky = append(flaky, s)
+		}
+	}
+	return flaky
 }
 
 func projectResults(results []tests.Result, mode string) []tests.Result {

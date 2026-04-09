@@ -201,8 +201,8 @@ func TestParseResponsesStreamEvent(t *testing.T) {
 
 func TestProjectForModeResponsesChatFallbackFailsInStrict(t *testing.T) {
 	res := Result{
-		TestID:  "responses.basic",
-		Status:  StatusPass,
+		TestID: "responses.basic",
+		Status: StatusPass,
 		Evidence: &Evidence{
 			FallbackChatShapeOnResponses: true,
 		},
@@ -264,6 +264,30 @@ func TestIsStrictUnsupportedFeature(t *testing.T) {
 	body = []byte(`{"error":{"message":"unsupported backend mode"}}`)
 	if isStrictUnsupportedFeature(body) {
 		t.Fatalf("did not expect generic unsupported to count as strict unsupported")
+	}
+}
+
+func TestProjectForModeUnsupportedRequiresCanonicalErrorObject(t *testing.T) {
+	body := []byte(`{"message":"Unsupported parameter: 'temperature' is not supported with this model."}`)
+	res := unsupportedFeatureResult(Result{
+		TestID:     "responses.custom_tool",
+		HTTPStatus: 400,
+	}, body)
+
+	strict := ProjectForMode(res, config.ModeStrict)
+	if strict.Status != StatusFail || strict.ErrorType != "spec_violation" {
+		t.Fatalf("expected strict spec violation for non-canonical error envelope, got %+v", strict)
+	}
+
+	body = []byte(`{"error":{"message":"Unsupported parameter: 'temperature' is not supported with this model.","type":"invalid_request_error"}}`)
+	res = unsupportedFeatureResult(Result{
+		TestID:     "responses.custom_tool",
+		HTTPStatus: 400,
+	}, body)
+
+	strict = ProjectForMode(res, config.ModeStrict)
+	if strict.Status != StatusUnsupported {
+		t.Fatalf("expected strict unsupported for canonical error envelope, got %+v", strict)
 	}
 }
 

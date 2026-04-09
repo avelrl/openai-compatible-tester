@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/avelrl/openai-compatible-tester/internal/config"
+	"github.com/avelrl/openai-compatible-tester/internal/report"
 	"github.com/avelrl/openai-compatible-tester/internal/tests"
 )
 
@@ -146,5 +147,23 @@ func TestFilterTestsSkipsExplicitlyDisabledOverride(t *testing.T) {
 	}
 	if filtered[0].ID != "chat.basic" {
 		t.Fatalf("expected chat.basic to remain, got %s", filtered[0].ID)
+	}
+}
+
+func TestFlakyStatsForModeRespectsStrict(t *testing.T) {
+	analysis := report.Analysis{
+		Spec: report.SpecAnalysis{
+			Flaky: []report.TestStats{{TestID: "strict-only"}},
+		},
+		Compatibility: report.CompatibilityAnalysis{
+			Flaky: []report.TestStats{{TestID: "compat-only"}},
+		},
+	}
+
+	if got := flakyStatsForMode(analysis, config.ModeStrict); len(got) != 1 || got[0].TestID != "strict-only" {
+		t.Fatalf("strict flaky=%+v", got)
+	}
+	if got := flakyStatsForMode(analysis, config.ModeCompat); len(got) != 1 || got[0].TestID != "compat-only" {
+		t.Fatalf("compat flaky=%+v", got)
 	}
 }

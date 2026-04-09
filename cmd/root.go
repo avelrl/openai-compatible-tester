@@ -175,7 +175,7 @@ func Execute() int {
 		}
 	}
 
-	if cfg.Suite.Analysis.Enabled && cfg.Suite.Analysis.FailOnFlaky && len(analysis.Compatibility.Flaky) > 0 {
+	if cfg.Suite.Analysis.Enabled && cfg.Suite.Analysis.FailOnFlaky && len(flakyStatsForMode(analysis, cfg.Suite.Mode)) > 0 {
 		return 1
 	}
 	if hasFailures(results) {
@@ -208,6 +208,15 @@ func hasFailures(results []tests.Result) bool {
 		}
 	}
 	return false
+}
+
+func flakyStatsForMode(analysis report.Analysis, mode string) []report.TestStats {
+	switch strings.TrimSpace(mode) {
+	case config.ModeStrict:
+		return analysis.Spec.Flaky
+	default:
+		return analysis.Compatibility.Flaky
+	}
 }
 
 func countStatuses(results []tests.Result) (pass, fail, timeout, unsupported int) {

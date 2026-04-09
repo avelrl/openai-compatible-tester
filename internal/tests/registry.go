@@ -1705,8 +1705,8 @@ func unsupportedResult(result Result, errType, msg string) Result {
 
 func unsupportedFeatureResult(result Result, body []byte) Result {
 	recordErrorEvidence(&result, body)
-	if isStrictUnsupportedFeature(body) {
-		ev := ensureEvidence(&result)
+	ev := ensureEvidence(&result)
+	if result.HTTPStatus >= 400 && result.HTTPStatus < 500 && hasCanonicalErrorObject(ev) && isStrictUnsupportedFeature(body) {
 		ev.StrictUnsupported = true
 		ev.StrictUnsupportedReason = strings.TrimSpace(errorMessage(body))
 	}

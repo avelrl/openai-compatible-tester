@@ -334,6 +334,9 @@ func TestAnalyzeFlakinessOnlyCountsMixedMultiRunResults(t *testing.T) {
 	if len(analysis.Compatibility.Flaky) != 0 {
 		t.Fatalf("single fail should not be considered flaky: %+v", analysis.Compatibility.Flaky)
 	}
+	if len(analysis.Spec.Flaky) != 0 {
+		t.Fatalf("single fail should not be considered strictly flaky: %+v", analysis.Spec.Flaky)
+	}
 
 	analysis = Analyze([]tests.Result{
 		{TestID: "t1", TestName: "Test1", Profile: "p1", Status: tests.StatusPass},
@@ -341,6 +344,25 @@ func TestAnalyzeFlakinessOnlyCountsMixedMultiRunResults(t *testing.T) {
 	}, cfg)
 	if len(analysis.Compatibility.Flaky) != 1 {
 		t.Fatalf("expected mixed multi-run result to be flaky: %+v", analysis.Compatibility.Flaky)
+	}
+	if len(analysis.Spec.Flaky) != 1 {
+		t.Fatalf("expected mixed multi-run result to be strictly flaky: %+v", analysis.Spec.Flaky)
+	}
+}
+
+func TestAnalyzeFlakinessSeparatesStrictFromCompat(t *testing.T) {
+	cfg := config.Config{}
+
+	analysis := Analyze([]tests.Result{
+		{TestID: "responses.basic", TestName: "Responses basic", Profile: "p1", Status: tests.StatusPass, Evidence: &tests.Evidence{FallbackChatShapeOnResponses: true}},
+		{TestID: "responses.basic", TestName: "Responses basic", Profile: "p1", Status: tests.StatusPass, Evidence: &tests.Evidence{CanonicalTextSeen: true}},
+	}, cfg)
+
+	if len(analysis.Compatibility.Flaky) != 0 {
+		t.Fatalf("did not expect compat flakiness: %+v", analysis.Compatibility.Flaky)
+	}
+	if len(analysis.Spec.Flaky) != 1 {
+		t.Fatalf("expected strict-only flakiness: %+v", analysis.Spec.Flaky)
 	}
 }
 
