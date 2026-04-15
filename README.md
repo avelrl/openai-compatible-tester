@@ -80,6 +80,7 @@ Model IDs come from the selected `models.yaml` profile, so `MODEL_CHAT` and `MOD
 
 The default `endpoints.yaml` and `models.yaml` are conservative templates. Provider-specific presets can live alongside them as separate files.
 For official OpenAI GPT-5-family notes and the current validated baseline, see [docs/openai-official-notes.md](docs/openai-official-notes.md).
+For the planned `llama_shim`-focused expansion path on top of the generic harness, see [docs/llama-shim-test-plan.md](docs/llama-shim-test-plan.md).
 
 Config precedence: **flags > environment variables > .env > YAML defaults**.
 
