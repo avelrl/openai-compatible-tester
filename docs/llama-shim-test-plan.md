@@ -857,6 +857,7 @@ Generic shim smoke:
 go run . \
   --models configs/models_llama_shim.yaml \
   --suite configs/suite_llama_shim.yaml \
+  --capabilities configs/capabilities_llama_shim.yaml \
   --profile llama-shim \
   --out-dir reports \
   --json \
@@ -869,6 +870,7 @@ Focused rerun for compaction work:
 go run . \
   --models configs/models_llama_shim.yaml \
   --suite configs/suite_llama_shim.yaml \
+  --capabilities configs/capabilities_llama_shim.yaml \
   --profile llama-shim \
   --tests responses.compact.manual,responses.compact.auto.previous_response,responses.compact.auto.conversation,responses.compact.stream_replay \
   --out-dir reports \
@@ -882,6 +884,7 @@ Focused rerun for local tool work:
 go run . \
   --models configs/models_llama_shim.yaml \
   --suite configs/suite_llama_shim.yaml \
+  --capabilities configs/capabilities_llama_shim.yaml \
   --profile llama-shim \
   --tests responses.tool.file_search.local,responses.tool.web_search.local,responses.tool.image_generation.local,responses.tool.computer.loop,responses.tool.code_interpreter.local,responses.tool.mcp.server_url,responses.tool.tool_search.server \
   --out-dir reports \

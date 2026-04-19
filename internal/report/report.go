@@ -923,7 +923,14 @@ func buildIncompat(results []tests.Result) []Incompatibility {
 		v.Tests = unique(v.Tests)
 		out = append(out, *v)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Count > out[j].Count })
+	sort.Slice(out, func(i, j int) bool {
+		iGate := tests.IsCapabilityGateErrorType(out[i].ErrorType)
+		jGate := tests.IsCapabilityGateErrorType(out[j].ErrorType)
+		if iGate != jGate {
+			return iGate
+		}
+		return out[i].Count > out[j].Count
+	})
 	if len(out) > 10 {
 		out = out[:10]
 	}
@@ -1175,7 +1182,11 @@ func writeUnsupported(f *os.File, unsupported []Incompatibility) {
 		return
 	}
 	for _, inc := range unsupported {
-		fmt.Fprintf(f, "- %s (%d): %s (tests: %s)\n", inc.ErrorType, inc.Count, inc.Message, strings.Join(inc.Tests, ", "))
+		label := inc.ErrorType
+		if tests.IsCapabilityGateErrorType(inc.ErrorType) {
+			label = "environment/" + inc.ErrorType
+		}
+		fmt.Fprintf(f, "- %s (%d): %s (tests: %s)\n", label, inc.Count, inc.Message, strings.Join(inc.Tests, ", "))
 	}
 }
 

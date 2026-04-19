@@ -22,6 +22,10 @@ const (
 	DefaultClientsPath   = "configs/clients.yaml"
 	ModeCompat           = "compat"
 	ModeStrict           = "strict"
+	CapabilityStatusSupported   = "supported"
+	CapabilityStatusUnsupported = "unsupported"
+	CapabilityStatusDisabled    = "disabled"
+	CapabilityStatusUnavailable = "unavailable"
 )
 
 type Config struct {
@@ -29,6 +33,7 @@ type Config struct {
 	Models    ModelsConfig
 	Suite     SuiteConfig
 	Clients   ClientsConfig
+	Capabilities CapabilitiesConfig
 
 	BaseURL string
 	APIKey  string
@@ -54,10 +59,20 @@ type EndpointsPaths struct {
 	Chat          string `yaml:"chat"`
 	Responses     string `yaml:"responses"`
 	Conversations string `yaml:"conversations"`
+	DebugCapabilities string `yaml:"debug_capabilities"`
 }
 
 type ModelsConfig struct {
 	Profiles []ModelProfile `yaml:"profiles"`
+}
+
+type CapabilitiesConfig struct {
+	Capabilities map[string]CapabilitySpec `yaml:"capabilities"`
+}
+
+type CapabilitySpec struct {
+	Status string `yaml:"status"`
+	Reason string `yaml:"reason"`
 }
 
 type ModelProfile struct {
@@ -74,6 +89,7 @@ type ModelProfile struct {
 
 type SuiteConfig struct {
 	Mode              string                  `yaml:"mode"`
+	Target            string                  `yaml:"target"`
 	Passes            int                     `yaml:"passes"`
 	WarmupPasses      int                     `yaml:"warmup_passes"`
 	Parallelism       int                     `yaml:"parallelism"`
@@ -191,6 +207,7 @@ type LoadOptions struct {
 	ModelsPath    string
 	EndpointsPath string
 	ClientsPath   string
+	CapabilitiesPath string
 	EnvFile       string
 	Mode          string
 
@@ -243,11 +260,22 @@ func Load(opts LoadOptions) (Config, error) {
 	if err != nil {
 		return cfg, fmt.Errorf("load clients: %w", err)
 	}
+	var capabilities CapabilitiesConfig
+	if strings.TrimSpace(opts.CapabilitiesPath) != "" {
+		capabilities, err = loadYAML[CapabilitiesConfig](opts.CapabilitiesPath)
+		if err != nil {
+			return cfg, fmt.Errorf("load capabilities: %w", err)
+		}
+		if err := validateCapabilities(capabilities); err != nil {
+			return cfg, err
+		}
+	}
 
 	cfg.Suite = suite
 	cfg.Models = models
 	cfg.Endpoints = endpoints
 	cfg.Clients = clients
+	cfg.Capabilities = capabilities
 
 	envMap, err := LoadEnvFiles([]string{".env", opts.EnvFile})
 	if err != nil {
@@ -321,6 +349,7 @@ func applyDefaults(cfg *Config) {
 	if strings.TrimSpace(cfg.Suite.Mode) == "" {
 		cfg.Suite.Mode = ModeCompat
 	}
+	cfg.Suite.Target = strings.TrimSpace(cfg.Suite.Target)
 	if cfg.Endpoints.Paths.Models == "" {
 		cfg.Endpoints.Paths.Models = "/v1/models"
 	}
@@ -333,10 +362,14 @@ func applyDefaults(cfg *Config) {
 	if cfg.Endpoints.Paths.Conversations == "" {
 		cfg.Endpoints.Paths.Conversations = "/v1/conversations"
 	}
+	if cfg.Endpoints.Paths.DebugCapabilities == "" {
+		cfg.Endpoints.Paths.DebugCapabilities = "/debug/capabilities"
+	}
 	cfg.Endpoints.Paths.Models = ensureLeadingSlash(cfg.Endpoints.Paths.Models)
 	cfg.Endpoints.Paths.Chat = ensureLeadingSlash(cfg.Endpoints.Paths.Chat)
 	cfg.Endpoints.Paths.Responses = ensureLeadingSlash(cfg.Endpoints.Paths.Responses)
 	cfg.Endpoints.Paths.Conversations = ensureLeadingSlash(cfg.Endpoints.Paths.Conversations)
+	cfg.Endpoints.Paths.DebugCapabilities = ensureLeadingSlash(cfg.Endpoints.Paths.DebugCapabilities)
 
 	if cfg.Endpoints.DefaultHeaders == nil {
 		cfg.Endpoints.DefaultHeaders = map[string]string{}
@@ -355,6 +388,9 @@ func applyDefaults(cfg *Config) {
 			t.LiteLLMHeaders = map[string]string{}
 		}
 		cfg.Suite.Tests[k] = t
+	}
+	if cfg.Capabilities.Capabilities == nil {
+		cfg.Capabilities.Capabilities = map[string]CapabilitySpec{}
 	}
 	if cfg.Suite.Retry.MaxAttempts == 0 {
 		cfg.Suite.Retry.MaxAttempts = 1
@@ -386,6 +422,9 @@ func (c Config) Validate() error {
 	if c.BaseURL == "" {
 		return errors.New("base_url is required (via endpoints.yaml, .env, env var, or --base-url)")
 	}
+	if err := validateCapabilities(c.Capabilities); err != nil {
+		return err
+	}
 	parsedBaseURL, err := url.Parse(c.BaseURL)
 	if err != nil {
 		return fmt.Errorf("invalid base_url: %w", err)
@@ -393,12 +432,13 @@ func (c Config) Validate() error {
 	for _, endpoint := range []struct {
 		name string
 		path string
-	}{
-		{name: "models", path: c.Endpoints.Paths.Models},
-		{name: "chat", path: c.Endpoints.Paths.Chat},
-		{name: "responses", path: c.Endpoints.Paths.Responses},
-		{name: "conversations", path: c.Endpoints.Paths.Conversations},
-	} {
+		}{
+			{name: "models", path: c.Endpoints.Paths.Models},
+			{name: "chat", path: c.Endpoints.Paths.Chat},
+			{name: "responses", path: c.Endpoints.Paths.Responses},
+			{name: "conversations", path: c.Endpoints.Paths.Conversations},
+			{name: "debug_capabilities", path: c.Endpoints.Paths.DebugCapabilities},
+		} {
 		if hasPathOverlap(parsedBaseURL.Path, endpoint.path) {
 			return fmt.Errorf("endpoints.%s path %q overlaps with base_url path %q; remove the duplicated prefix", endpoint.name, endpoint.path, parsedBaseURL.Path)
 		}
@@ -485,6 +525,38 @@ func (c Config) Validate() error {
 		return err
 	}
 	return nil
+}
+
+func (c CapabilitiesConfig) Lookup(name string) (CapabilitySpec, bool) {
+	if len(c.Capabilities) == 0 {
+		return CapabilitySpec{}, false
+	}
+	spec, ok := c.Capabilities[strings.TrimSpace(name)]
+	if !ok {
+		return CapabilitySpec{}, false
+	}
+	spec.Status = normalizeCapabilityStatus(spec.Status)
+	spec.Reason = strings.TrimSpace(spec.Reason)
+	return spec, true
+}
+
+func validateCapabilities(cfg CapabilitiesConfig) error {
+	for key, spec := range cfg.Capabilities {
+		name := strings.TrimSpace(key)
+		if name == "" {
+			return errors.New("capabilities: empty capability key")
+		}
+		switch normalizeCapabilityStatus(spec.Status) {
+		case CapabilityStatusSupported, CapabilityStatusUnsupported, CapabilityStatusDisabled, CapabilityStatusUnavailable:
+		default:
+			return fmt.Errorf("capabilities.%s.status: unsupported value %q", name, spec.Status)
+		}
+	}
+	return nil
+}
+
+func normalizeCapabilityStatus(status string) string {
+	return strings.ToLower(strings.TrimSpace(status))
 }
 
 func validateTestOverride(scope, testID string, t TestOverride) error {

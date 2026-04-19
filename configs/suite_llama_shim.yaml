@@ -1,0 +1,56 @@
+mode: compat
+target: llama_shim
+passes: 1
+warmup_passes: 0
+parallelism: 1
+timeout_seconds: 60
+litellm_headers: {}
+retry:
+  max_attempts: 3
+  backoff_ms: 250
+  rate_limit_max_attempts: 3
+  rate_limit_fallback_ms: 5000
+  retry_on_status: [429, 500, 502, 503, 504]
+  test_retries: 0
+report:
+  snippet_limit_bytes: 4096
+stream:
+  enabled: true
+tool_calling:
+  enabled: true
+structured_outputs:
+  enabled: true
+conversations:
+  enabled: true
+memory:
+  enabled: true
+chat_reasoning:
+  enabled: false
+tests:
+  responses.memory.prev_id:
+    timeout_seconds: 45
+    treat_timeout_as_unsupported: true
+  responses.conversations:
+    timeout_seconds: 45
+    treat_timeout_as_unsupported: true
+  responses.previous_response.chain:
+    timeout_seconds: 60
+  responses.retrieve.input_items:
+    timeout_seconds: 60
+  conversations.create.retrieve:
+    timeout_seconds: 60
+analysis:
+  enabled: true
+  compute_percentiles: true
+  percentiles: [50, 90, 95, 99]
+  flakiness: false
+  fail_on_flaky: false
+codex_review:
+  enabled: false
+  codex_bin: "codex"
+  model: "gpt-5.4"
+  reasoning_effort: "high"
+  sandbox: "read-only"
+  approvals: "never"
+  prompt_template: |
+    You are a strict QA auditor for OpenAI-compatible APIs.

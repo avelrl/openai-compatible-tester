@@ -68,7 +68,7 @@ func deriveSpecOutcome(res Result) (Status, string, string) {
 		if ev != nil && ev.StrictUnsupported && hasCanonicalErrorObject(ev) {
 			return compatStatus, compatType, compatMsg
 		}
-		if compatType == "endpoint_missing" || compatType == "unsupported_get" {
+		if compatType == "endpoint_missing" || compatType == "unsupported_get" || IsCapabilityGateErrorType(compatType) {
 			return compatStatus, compatType, compatMsg
 		}
 		return StatusFail, "spec_violation", "feature reported as unsupported without canonical OpenAI-style rejection"

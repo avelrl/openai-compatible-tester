@@ -25,6 +25,10 @@ const (
 	StatusFail        Status = "fail"
 	StatusTimeout     Status = "timeout"
 	StatusUnsupported Status = "unsupported"
+
+	ErrorTypeCapabilityUnsupported = "capability_unsupported"
+	ErrorTypeCapabilityDisabled    = "capability_disabled"
+	ErrorTypeDependencyUnavailable = "dependency_unavailable"
 )
 
 var snippetLimit = 4096
@@ -74,15 +78,35 @@ type TestCase struct {
 	ID       string
 	Name     string
 	Category string
+	Family   string
+	Target   string
 
 	RequiresStream        bool
 	RequiresTools         bool
 	RequiresStructured    bool
 	RequiresConversations bool
 	RequiresMemory        bool
+	RequiredCapabilities  []string
 	Kind                  string // responses, chat, sanity
 
 	Run func(ctx context.Context, rc RunContext) Result
+}
+
+func IsCapabilityGateErrorType(errorType string) bool {
+	switch strings.TrimSpace(errorType) {
+	case ErrorTypeCapabilityUnsupported, ErrorTypeCapabilityDisabled, ErrorTypeDependencyUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+func (t TestCase) AppliesToTarget(target string) bool {
+	testTarget := strings.TrimSpace(t.Target)
+	if testTarget == "" {
+		return true
+	}
+	return testTarget == strings.TrimSpace(target)
 }
 
 type RunContext struct {
@@ -193,17 +217,48 @@ func Registry() []TestCase {
 			RequiresMemory: true,
 			Run:            runResponsesMemory,
 		},
-		{
-			ID:                    "responses.conversations",
-			Name:                  "Responses conversations",
-			Category:              "responses",
-			Kind:                  KindResponses,
-			RequiresConversations: true,
-			Run:                   runResponsesConversations,
-		},
-		{
-			ID:       "chat.basic",
-			Name:     "Chat completions basic",
+			{
+				ID:                    "responses.conversations",
+				Name:                  "Responses conversations",
+				Category:              "responses",
+				Kind:                  KindResponses,
+				RequiresConversations: true,
+				Run:                   runResponsesConversations,
+			},
+			{
+				ID:                   "responses.previous_response.chain",
+				Name:                 "Responses previous_response_id chain",
+				Category:             "responses",
+				Family:               "state",
+				Target:               "llama_shim",
+				Kind:                 KindResponses,
+				RequiresMemory:       true,
+				RequiredCapabilities: []string{"responses.store"},
+				Run:                  runLlamaShimResponsesPreviousResponseChain,
+			},
+			{
+				ID:                   "responses.retrieve.input_items",
+				Name:                 "Responses retrieve input_items",
+				Category:             "responses",
+				Family:               "state",
+				Target:               "llama_shim",
+				Kind:                 KindResponses,
+				RequiredCapabilities: []string{"responses.input_items"},
+				Run:                  runLlamaShimResponsesRetrieveInputItems,
+			},
+			{
+				ID:                    "conversations.create.retrieve",
+				Name:                  "Conversations create + GET",
+				Category:              "responses",
+				Family:                "state",
+				Target:                "llama_shim",
+				Kind:                  KindResponses,
+				RequiresConversations: true,
+				Run:                   runLlamaShimConversationsCreateRetrieve,
+			},
+			{
+				ID:       "chat.basic",
+				Name:     "Chat completions basic",
 			Category: "chat",
 			Kind:     KindChat,
 			Run:      runChatBasic,

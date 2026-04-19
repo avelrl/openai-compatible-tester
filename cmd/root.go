@@ -30,6 +30,7 @@ func Execute() int {
 	modelsPath := fs.String("models", config.DefaultModelsPath, "Models config YAML")
 	endpointsPath := fs.String("endpoints", config.DefaultEndpointsPath, "Endpoints config YAML")
 	clientsPath := fs.String("clients", config.DefaultClientsPath, "Known clients compatibility YAML")
+	capabilitiesPath := fs.String("capabilities", "", "Target capability manifest YAML")
 	mode := fs.String("mode", config.ModeCompat, "Primary verdict mode: compat or strict")
 	profile := fs.String("profile", "", "Run only one model profile by name")
 	testIDs := fs.String("tests", "", "Comma-separated test IDs to run")
@@ -67,12 +68,13 @@ func Execute() int {
 	}
 
 	cfg, err := config.Load(config.LoadOptions{
-		SuitePath:     *suitePath,
-		ModelsPath:    *modelsPath,
-		EndpointsPath: *endpointsPath,
-		ClientsPath:   *clientsPath,
-		EnvFile:       *envFile,
-		Mode:          *mode,
+			SuitePath:     *suitePath,
+			ModelsPath:    *modelsPath,
+			EndpointsPath: *endpointsPath,
+			ClientsPath:   *clientsPath,
+			CapabilitiesPath: *capabilitiesPath,
+			EnvFile:       *envFile,
+			Mode:          *mode,
 		BaseURL:       *baseURL,
 		APIKey:        *apiKey,
 		Profile:       *profile,
@@ -245,6 +247,9 @@ func filterTests(cfg config.Config, all []tests.TestCase, selected map[string]st
 			if _, ok := selected[t.ID]; !ok {
 				continue
 			}
+		}
+		if !t.AppliesToTarget(cfg.Suite.Target) {
+			continue
 		}
 		if ov, ok := cfg.Suite.Tests[t.ID]; ok && ov.Enabled != nil && !*ov.Enabled {
 			continue

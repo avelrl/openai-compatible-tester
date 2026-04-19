@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,13 +29,14 @@ type Runner struct {
 	cfg       config.Config
 	client    *httpclient.Client
 	tests     []TestCase
+	capabilities config.CapabilitiesConfig
 	pauseMu   sync.Mutex
 	pauseCond *sync.Cond
 	paused    bool
 }
 
 func NewRunner(cfg config.Config, client *httpclient.Client, tests []TestCase) *Runner {
-	r := &Runner{cfg: cfg, client: client, tests: tests}
+	r := &Runner{cfg: cfg, client: client, tests: tests, capabilities: cfg.Capabilities}
 	r.pauseCond = sync.NewCond(&r.pauseMu)
 	return r
 }
@@ -83,6 +85,7 @@ func (r *Runner) Run(ctx context.Context, profiles []config.ModelProfile, onEven
 	if len(profiles) == 0 {
 		return nil, fmt.Errorf("no profiles selected")
 	}
+	r.prepareCapabilities(ctx)
 
 	passes := r.cfg.Suite.Passes
 	warmups := r.cfg.Suite.WarmupPasses
@@ -166,6 +169,9 @@ func containsString(list []string, v string) bool {
 }
 
 func (r *Runner) runTestWithRetries(ctx context.Context, test TestCase, job job) Result {
+	if res, blocked := r.capabilityGateResult(test, job); blocked {
+		return finalizeModeResult(r.cfg.Suite.Mode, res)
+	}
 	maxAttempts := r.cfg.Suite.Retry.TestRetries + 1
 	if maxAttempts < 1 {
 		maxAttempts = 1
@@ -201,6 +207,85 @@ func (r *Runner) runTestWithRetries(ctx context.Context, test TestCase, job job)
 		}
 	}
 	return res
+}
+
+func (r *Runner) capabilityGateResult(test TestCase, job job) (Result, bool) {
+	if len(test.RequiredCapabilities) == 0 {
+		return Result{}, false
+	}
+	if len(r.capabilities.Capabilities) == 0 {
+		return capabilityBlockedResult(
+			test,
+			job,
+			ErrorTypeCapabilityDisabled,
+			fmt.Sprintf("no capability manifest configured; required capabilities: %s", strings.Join(test.RequiredCapabilities, ", ")),
+		), true
+	}
+	for _, name := range test.RequiredCapabilities {
+		spec, ok := r.capabilities.Lookup(name)
+		if !ok {
+			return capabilityBlockedResult(
+				test,
+				job,
+				ErrorTypeCapabilityDisabled,
+				fmt.Sprintf("required capability %s is not declared in the capability manifest", name),
+			), true
+		}
+		switch spec.Status {
+		case config.CapabilityStatusSupported:
+			continue
+		case config.CapabilityStatusUnsupported:
+			return capabilityBlockedResult(test, job, ErrorTypeCapabilityUnsupported, capabilityMessage(name, "is not supported by this target", spec.Reason)), true
+		case config.CapabilityStatusDisabled:
+			return capabilityBlockedResult(test, job, ErrorTypeCapabilityDisabled, capabilityMessage(name, "is disabled in this environment", spec.Reason)), true
+		case config.CapabilityStatusUnavailable:
+			return capabilityBlockedResult(test, job, ErrorTypeDependencyUnavailable, capabilityMessage(name, "is currently unavailable because an external dependency is missing or unhealthy", spec.Reason)), true
+		default:
+			return capabilityBlockedResult(test, job, ErrorTypeCapabilityDisabled, capabilityMessage(name, "has an invalid manifest status", spec.Status)), true
+		}
+	}
+	return Result{}, false
+}
+
+func (r *Runner) prepareCapabilities(ctx context.Context) {
+	r.capabilities = r.cfg.Capabilities
+	if strings.TrimSpace(r.cfg.Suite.Target) != "llama_shim" {
+		return
+	}
+	if r.client == nil {
+		return
+	}
+	path := strings.TrimSpace(r.cfg.Endpoints.Paths.DebugCapabilities)
+	if path == "" {
+		return
+	}
+	resp, err := r.client.Get(ctx, path, nil)
+	if err != nil || resp == nil {
+		return
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return
+	}
+	probed, err := capabilitiesFromDebugManifest(resp.Body)
+	if err != nil {
+		return
+	}
+	r.capabilities = mergeCapabilities(r.capabilities, probed)
+}
+
+func capabilityBlockedResult(test TestCase, job job, errorType, msg string) Result {
+	res := baseRunResult(test, job, StatusUnsupported)
+	res.ErrorType = errorType
+	res.ErrorMessage = msg
+	return res
+}
+
+func capabilityMessage(name, summary, reason string) string {
+	msg := fmt.Sprintf("required capability %s %s", name, summary)
+	if reason = strings.TrimSpace(reason); reason != "" {
+		msg += ": " + reason
+	}
+	return msg
 }
 
 func rateLimitReservationErrorResult(test TestCase, job job, err error) Result {
@@ -330,6 +415,9 @@ func modelFor(test TestCase, profile config.ModelProfile) string {
 func (r *Runner) filterTests() []TestCase {
 	out := make([]TestCase, 0, len(r.tests))
 	for _, t := range r.tests {
+		if !t.AppliesToTarget(r.cfg.Suite.Target) {
+			continue
+		}
 		if ov, ok := r.cfg.Suite.Tests[t.ID]; ok && ov.Enabled != nil && !*ov.Enabled {
 			continue
 		}

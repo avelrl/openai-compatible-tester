@@ -1,0 +1,67 @@
+capabilities:
+  # Supported values:
+  # - supported
+  # - unsupported
+  # - disabled
+  # - unavailable
+  #
+  # Use:
+  # - supported: target exposes this capability and the current environment is ready
+  # - unsupported: target does not implement this capability
+  # - disabled: target can implement it, but this environment is intentionally not configured
+  # - unavailable: target can implement it, but an external dependency is currently missing or unhealthy
+
+  responses.store:
+    status: supported
+  responses.input_items:
+    status: supported
+  responses.retrieve_stream:
+    status: supported
+  responses.compaction.auto:
+    status: supported
+  conversations.items:
+    status: supported
+  chat.store:
+    status: supported
+
+  retrieval.vector_store:
+    status: disabled
+    reason: "Enable and seed the local vector store fixture before retrieval tests."
+  tool.file_search.local:
+    status: disabled
+    reason: "Requires local retrieval and vector store wiring."
+  tool.web_search.local:
+    status: disabled
+    reason: "Requires a configured local web search backend such as SearxNG."
+  tool.image_generation.local:
+    status: disabled
+    reason: "Requires a configured local image generation backend."
+  tool.computer.local:
+    status: disabled
+    reason: "Requires a configured local computer-use backend and deterministic fixture assets."
+  tool.code_interpreter.local:
+    status: disabled
+    reason: "Requires a configured local code interpreter runtime."
+  tool.mcp.server_url:
+    status: disabled
+    reason: "Requires a reachable MCP fixture server."
+  tool.mcp.approval:
+    status: disabled
+    reason: "Requires MCP approval flow wiring in the target environment."
+  tool.tool_search.server:
+    status: disabled
+    reason: "Requires server-side tool_search support in the target environment."
+
+  routing.prefer_local:
+    status: supported
+  routing.prefer_upstream:
+    status: supported
+  routing.local_only:
+    status: supported
+
+  persistence.restart_safe:
+    status: disabled
+    reason: "Enable a persistent backing store and restart-safe test harness before durability checks."
+  cleanup.expiry:
+    status: disabled
+    reason: "Enable deterministic cleanup fixtures before expiry and cleanup lifecycle tests."
