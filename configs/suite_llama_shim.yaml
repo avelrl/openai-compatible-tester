@@ -39,6 +39,14 @@ tests:
     timeout_seconds: 60
   conversations.create.retrieve:
     timeout_seconds: 60
+  conversations.items.list:
+    timeout_seconds: 60
+  conversations.items.append:
+    timeout_seconds: 60
+  responses.compaction:
+    timeout_seconds: 60
+  responses.compaction.auto:
+    timeout_seconds: 60
 analysis:
   enabled: true
   compute_percentiles: true

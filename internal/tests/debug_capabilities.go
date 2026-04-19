@@ -60,6 +60,10 @@ func deriveCapabilitiesFromShimManifest(doc map[string]interface{}) (config.Capa
 		if spec, ok := boolToCapabilitySpec(responses, "input_items", "responses.input_items"); ok {
 			out.Capabilities["responses.input_items"] = spec
 		}
+		if spec, ok := boolToCapabilitySpec(responses, "compact", "responses.compact"); ok {
+			out.Capabilities["responses.compaction"] = spec
+			out.Capabilities["responses.compaction.auto"] = spec
+		}
 		if spec, ok := boolToCapabilitySpec(responses, "retrieve_stream", "responses.retrieve_stream"); ok {
 			out.Capabilities["responses.retrieve_stream"] = spec
 		}

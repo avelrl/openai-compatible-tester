@@ -2,8 +2,10 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/avelrl/openai-compatible-tester/internal/httpclient"
@@ -235,6 +237,347 @@ func runLlamaShimConversationsCreateRetrieve(ctx context.Context, rc RunContext)
 	return result
 }
 
+func runLlamaShimConversationsItemsList(ctx context.Context, rc RunContext) Result {
+	result := baseResult("conversations.items.list", "Conversations list items", rc)
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "conversations.items.list")
+	sentinel := "llama-shim-conversation-items-list-8317"
+	createPayload := map[string]interface{}{
+		"items": []map[string]interface{}{
+			inputTextMessageItem("system", "You are a test assistant."),
+			inputTextMessageItem("user", "Seed marker "+sentinel),
+		},
+	}
+	withTraceStep(&result, "create_conversation_for_items_list", prettyJSON(createPayload), "")
+	createResp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Conversations, createPayload, headers)
+	if err != nil {
+		return failResult(result, err, "http_error")
+	}
+	recordHTTPResponse(&result, createResp)
+	updateTraceStepResponse(&result, "create_conversation_for_items_list", string(createResp.Body))
+	if isHTMLDocument(createResp.Body) {
+		return unsupportedResult(result, "endpoint_missing", "html page returned instead of API response")
+	}
+	if isUnexpectedEndpointOrMethod(createResp.Body) {
+		return unsupportedResult(result, "endpoint_missing", errorMessage(createResp.Body))
+	}
+	if isEndpointMissing(createResp.StatusCode) {
+		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", createResp.StatusCode))
+	}
+	if createResp.StatusCode < 200 || createResp.StatusCode >= 300 {
+		return failHTTPStatusResult(result, createResp)
+	}
+	convID := extractResponseID(createResp.Body)
+	if convID == "" {
+		return failResult(result, errors.New("missing conversation id"), "schema")
+	}
+
+	listPath := rc.Config.Endpoints.Paths.Conversations + "/" + url.PathEscape(convID) + "/items?order=asc&limit=20"
+	result.RequestSnippet = clip("GET "+listPath, snippetLimit)
+	withTraceStep(&result, "list_conversation_items", "GET "+listPath, "")
+	listResp, err := rc.Client.Get(ctx, listPath, headers)
+	if err != nil {
+		return failResult(result, err, "http_error")
+	}
+	recordHTTPResponse(&result, listResp)
+	updateTraceStepResponse(&result, "list_conversation_items", string(listResp.Body))
+	if isHTMLDocument(listResp.Body) {
+		return unsupportedResult(result, "unsupported_get", "html page returned instead of API response")
+	}
+	if isUnexpectedEndpointOrMethod(listResp.Body) {
+		return unsupportedResult(result, "unsupported_get", errorMessage(listResp.Body))
+	}
+	if isEndpointMissing(listResp.StatusCode) {
+		return unsupportedResult(result, "unsupported_get", fmt.Sprintf("status %d", listResp.StatusCode))
+	}
+	if listResp.StatusCode < 200 || listResp.StatusCode >= 300 {
+		return failHTTPStatusResult(result, listResp)
+	}
+	itemIDs, err := extractListItemIDs(listResp.Body)
+	if err != nil {
+		return failResult(result, err, "schema")
+	}
+	if len(itemIDs) == 0 {
+		return failResult(result, errors.New("conversation items list returned no ids"), "schema")
+	}
+	body := string(listResp.Body)
+	if !strings.Contains(body, sentinel) {
+		return failResult(result, fmt.Errorf("conversation items list did not include sentinel %q", sentinel), "schema")
+	}
+	result.Status = StatusPass
+	result.ErrorType = ""
+	result.ErrorMessage = ""
+	return result
+}
+
+func runLlamaShimConversationsItemsAppend(ctx context.Context, rc RunContext) Result {
+	result := baseResult("conversations.items.append", "Conversations append items", rc)
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "conversations.items.append")
+	seed := "llama-shim-conversation-items-seed-4081"
+	firstAppend := "llama-shim-conversation-items-append-a-4081"
+	secondAppend := "llama-shim-conversation-items-append-b-4081"
+
+	createPayload := map[string]interface{}{
+		"items": []map[string]interface{}{
+			inputTextMessageItem("system", "You are a test assistant."),
+			inputTextMessageItem("user", "Seed marker "+seed),
+		},
+	}
+	withTraceStep(&result, "create_conversation_for_append", prettyJSON(createPayload), "")
+	createResp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Conversations, createPayload, headers)
+	if err != nil {
+		return failResult(result, err, "http_error")
+	}
+	recordHTTPResponse(&result, createResp)
+	updateTraceStepResponse(&result, "create_conversation_for_append", string(createResp.Body))
+	if isHTMLDocument(createResp.Body) {
+		return unsupportedResult(result, "endpoint_missing", "html page returned instead of API response")
+	}
+	if isUnexpectedEndpointOrMethod(createResp.Body) {
+		return unsupportedResult(result, "endpoint_missing", errorMessage(createResp.Body))
+	}
+	if isEndpointMissing(createResp.StatusCode) {
+		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", createResp.StatusCode))
+	}
+	if createResp.StatusCode < 200 || createResp.StatusCode >= 300 {
+		return failHTTPStatusResult(result, createResp)
+	}
+	convID := extractResponseID(createResp.Body)
+	if convID == "" {
+		return failResult(result, errors.New("missing conversation id"), "schema")
+	}
+
+	appendPath := rc.Config.Endpoints.Paths.Conversations + "/" + url.PathEscape(convID) + "/items"
+	appendPayload := map[string]interface{}{
+		"items": []map[string]interface{}{
+			inputTextMessageItem("user", "Append marker "+firstAppend),
+			inputTextMessageItem("user", "Append marker "+secondAppend),
+		},
+	}
+	withTraceStep(&result, "append_conversation_items", prettyJSON(appendPayload), "")
+	appendResp, err := rc.Client.PostJSON(ctx, appendPath, appendPayload, headers)
+	if err != nil {
+		return failResult(result, err, "http_error")
+	}
+	recordHTTPResponse(&result, appendResp)
+	updateTraceStepResponse(&result, "append_conversation_items", string(appendResp.Body))
+	if isHTMLDocument(appendResp.Body) {
+		return unsupportedResult(result, "unsupported_post", "html page returned instead of API response")
+	}
+	if isUnexpectedEndpointOrMethod(appendResp.Body) {
+		return unsupportedResult(result, "unsupported_post", errorMessage(appendResp.Body))
+	}
+	if isEndpointMissing(appendResp.StatusCode) {
+		return unsupportedResult(result, "unsupported_post", fmt.Sprintf("status %d", appendResp.StatusCode))
+	}
+	if appendResp.StatusCode < 200 || appendResp.StatusCode >= 300 {
+		return failHTTPStatusResult(result, appendResp)
+	}
+	appendBody := string(appendResp.Body)
+	if !strings.Contains(appendBody, firstAppend) || !strings.Contains(appendBody, secondAppend) {
+		return failResult(result, errors.New("append response did not include appended sentinels"), "schema")
+	}
+	itemIDs, err := extractListItemIDs(appendResp.Body)
+	if err != nil {
+		return failResult(result, err, "schema")
+	}
+	if len(itemIDs) < 2 {
+		return failResult(result, fmt.Errorf("expected at least 2 appended item ids, got %d", len(itemIDs)), "schema")
+	}
+	firstItemID, err := extractListItemIDContaining(appendResp.Body, firstAppend)
+	if err != nil {
+		return failResult(result, err, "schema")
+	}
+
+	getItemPath := rc.Config.Endpoints.Paths.Conversations + "/" + url.PathEscape(convID) + "/items/" + url.PathEscape(firstItemID)
+	result.RequestSnippet = clip("GET "+getItemPath, snippetLimit)
+	withTraceStep(&result, "get_appended_item", "GET "+getItemPath, "")
+	getResp, err := rc.Client.Get(ctx, getItemPath, headers)
+	if err != nil {
+		return failResult(result, err, "http_error")
+	}
+	recordHTTPResponse(&result, getResp)
+	updateTraceStepResponse(&result, "get_appended_item", string(getResp.Body))
+	if isHTMLDocument(getResp.Body) {
+		return unsupportedResult(result, "unsupported_get", "html page returned instead of API response")
+	}
+	if isUnexpectedEndpointOrMethod(getResp.Body) {
+		return unsupportedResult(result, "unsupported_get", errorMessage(getResp.Body))
+	}
+	if isEndpointMissing(getResp.StatusCode) {
+		return unsupportedResult(result, "unsupported_get", fmt.Sprintf("status %d", getResp.StatusCode))
+	}
+	if getResp.StatusCode < 200 || getResp.StatusCode >= 300 {
+		return failHTTPStatusResult(result, getResp)
+	}
+	getBody := string(getResp.Body)
+	if !strings.Contains(getBody, firstItemID) {
+		return failResult(result, fmt.Errorf("conversation item get did not include id %q", firstItemID), "schema")
+	}
+	if !strings.Contains(getBody, firstAppend) {
+		return failResult(result, fmt.Errorf("conversation item get did not include first appended sentinel %q", firstAppend), "schema")
+	}
+	result.Status = StatusPass
+	result.ErrorType = ""
+	result.ErrorMessage = ""
+	return result
+}
+
+func runLlamaShimResponsesCompaction(ctx context.Context, rc RunContext) Result {
+	result := baseResult("responses.compaction", "Responses compaction", rc)
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "responses.compaction")
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "responses.compaction")
+	compactPath := rc.Config.Endpoints.Paths.Responses + "/compact"
+	code := "777"
+
+	compactPayload := map[string]interface{}{
+		"model": rc.Profile.ResponsesModel,
+		"input": []map[string]interface{}{
+			inputTextMessageItem("system", "You are a test assistant. Remember the launch code for the next turn."),
+			inputTextMessageItem("user", "Remember that the launch code is "+code+"."),
+			outputTextMessageItem("assistant", "I will remember the launch code."),
+		},
+	}
+	withTraceStep(&result, "compact_response_context", prettyJSON(compactPayload), "")
+	compactResp, err := rc.Client.PostJSON(ctx, compactPath, compactPayload, headers)
+	if err != nil {
+		return failResult(result, err, "http_error")
+	}
+	recordHTTPResponse(&result, compactResp)
+	updateTraceStepResponse(&result, "compact_response_context", string(compactResp.Body))
+	if blocked := maybeUnsupportedResponsesResult(result, compactResp); blocked != nil {
+		return *blocked
+	}
+	if !strings.Contains(string(compactResp.Body), "\"object\":\"response.compaction\"") {
+		return failResult(result, errors.New("compaction endpoint did not return response.compaction"), "schema")
+	}
+	blob, err := extractCompactionEncryptedContent(compactResp.Body)
+	if err != nil {
+		return failResult(result, err, "schema")
+	}
+	if !strings.HasPrefix(blob, "llama_shim.compaction.") {
+		return failResult(result, fmt.Errorf("unexpected compaction blob prefix for %q", blob), "schema")
+	}
+
+	followupPayload := baseResponsesPayload(rc.Profile)
+	applyResponsesReasoningOverride(followupPayload, effectiveResponsesReasoningEffort(rc.Profile, ov))
+	followupPayload["store"] = true
+	followupPayload["input"] = []map[string]interface{}{
+		{"type": "compaction", "encrypted_content": blob},
+		inputTextMessageItem("user", "What is the launch code? Reply with just the number."),
+	}
+	withTraceStep(&result, "use_compaction_blob", prettyJSON(followupPayload), "")
+	followupResp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, followupPayload, headers)
+	if err != nil {
+		return failResult(result, err, "http_error")
+	}
+	recordHTTPResponse(&result, followupResp)
+	updateTraceStepResponse(&result, "use_compaction_blob", string(followupResp.Body))
+	if blocked := maybeUnsupportedResponsesResult(result, followupResp); blocked != nil {
+		return *blocked
+	}
+	text := strings.TrimSpace(extractResponseText(followupResp.Body))
+	if text == "" {
+		return failResult(result, errors.New("missing follow-up text after compaction"), "schema")
+	}
+	if !strings.Contains(text, code) {
+		return failResult(result, fmt.Errorf("expected compaction follow-up to mention %s, got %q", code, text), "assert")
+	}
+	result.Status = StatusPass
+	result.ErrorType = ""
+	result.ErrorMessage = ""
+	return result
+}
+
+func runLlamaShimResponsesAutoCompaction(ctx context.Context, rc RunContext) Result {
+	result := baseResult("responses.compaction.auto", "Responses auto compaction", rc)
+	headers := requestHeadersForTest(rc.Config, rc.Profile, "responses.compaction.auto")
+	ov, _ := testOverrideForProfile(rc.Config, rc.Profile, "responses.compaction.auto")
+	code := "2468"
+
+	seedPayload := baseResponsesPayload(rc.Profile)
+	applyResponsesReasoningOverride(seedPayload, effectiveResponsesReasoningEffort(rc.Profile, ov))
+	seedPayload["store"] = true
+	seedPayload["input"] = []map[string]interface{}{
+		inputTextMessageItem("system", "You are a test assistant."),
+		inputTextMessageItem("user", "Remember that the auto compaction code is "+code+". Reply with OK only."),
+	}
+	withTraceStep(&result, "seed_auto_compaction_history", prettyJSON(seedPayload), "")
+	seedResp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, seedPayload, headers)
+	if err != nil {
+		return failResult(result, err, "http_error")
+	}
+	recordHTTPResponse(&result, seedResp)
+	updateTraceStepResponse(&result, "seed_auto_compaction_history", string(seedResp.Body))
+	if blocked := maybeUnsupportedResponsesResult(result, seedResp); blocked != nil {
+		return *blocked
+	}
+	seedResponseID := extractResponseID(seedResp.Body)
+	if seedResponseID == "" {
+		return failResult(result, errors.New("missing seed response id for auto compaction"), "schema")
+	}
+
+	payload := baseResponsesPayload(rc.Profile)
+	applyResponsesReasoningOverride(payload, effectiveResponsesReasoningEffort(rc.Profile, ov))
+	payload["store"] = true
+	payload["previous_response_id"] = seedResponseID
+	payload["context_management"] = []map[string]interface{}{
+		{"type": "compaction", "compact_threshold": 1},
+	}
+	payload["input"] = []map[string]interface{}{
+		inputTextMessageItem("user", "Acknowledge that you still remember the auto compaction code. Reply with OK only."),
+	}
+	withTraceStep(&result, "create_auto_compaction_response", prettyJSON(payload), "")
+	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, payload, headers)
+	if err != nil {
+		return failResult(result, err, "http_error")
+	}
+	recordHTTPResponse(&result, resp)
+	updateTraceStepResponse(&result, "create_auto_compaction_response", string(resp.Body))
+	if blocked := maybeUnsupportedResponsesResult(result, resp); blocked != nil {
+		return *blocked
+	}
+	outputTypes, err := extractOutputItemTypes(resp.Body)
+	if err != nil {
+		return failResult(result, err, "schema")
+	}
+	if len(outputTypes) == 0 || outputTypes[0] != "compaction" {
+		return failResult(result, fmt.Errorf("expected prepended compaction item, got output types %v", outputTypes), "schema")
+	}
+	if _, err := extractCompactionEncryptedContent(resp.Body); err != nil {
+		return failResult(result, err, "schema")
+	}
+	responseID := extractResponseID(resp.Body)
+	if responseID == "" {
+		return failResult(result, errors.New("missing response id for auto compaction follow-up"), "schema")
+	}
+
+	followupPayload := baseResponsesPayload(rc.Profile)
+	applyResponsesReasoningOverride(followupPayload, effectiveResponsesReasoningEffort(rc.Profile, ov))
+	followupPayload["previous_response_id"] = responseID
+	followupPayload["input"] = "What is the auto compaction code? Reply with just the number."
+	withTraceStep(&result, "follow_auto_compaction_response", prettyJSON(followupPayload), "")
+	followupResp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, followupPayload, headers)
+	if err != nil {
+		return failResult(result, err, "http_error")
+	}
+	recordHTTPResponse(&result, followupResp)
+	updateTraceStepResponse(&result, "follow_auto_compaction_response", string(followupResp.Body))
+	if blocked := maybeUnsupportedResponsesResult(result, followupResp); blocked != nil {
+		return *blocked
+	}
+	text := strings.TrimSpace(extractResponseText(followupResp.Body))
+	if text == "" {
+		return failResult(result, errors.New("missing auto compaction follow-up text"), "schema")
+	}
+	if !strings.Contains(text, code) {
+		return failResult(result, fmt.Errorf("expected auto compaction follow-up to mention %s, got %q", code, text), "assert")
+	}
+	result.Status = StatusPass
+	result.ErrorType = ""
+	result.ErrorMessage = ""
+	return result
+}
+
 func recordHTTPResponse(result *Result, resp *httpclient.Response) {
 	if result == nil || resp == nil {
 		return
@@ -285,4 +628,106 @@ func containsOrderedTokens(text string, tokens ...string) bool {
 		start += idx + len(strings.TrimSpace(token))
 	}
 	return true
+}
+
+func inputTextMessageItem(role, text string) map[string]interface{} {
+	return map[string]interface{}{
+		"type": "message",
+		"role": role,
+		"content": []map[string]string{
+			{"type": "input_text", "text": text},
+		},
+	}
+}
+
+func outputTextMessageItem(role, text string) map[string]interface{} {
+	return map[string]interface{}{
+		"type": "message",
+		"role": role,
+		"content": []map[string]string{
+			{"type": "output_text", "text": text},
+		},
+	}
+}
+
+func extractListItemIDs(body []byte) ([]string, error) {
+	var doc struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(doc.Data))
+	for _, item := range doc.Data {
+		id := strings.TrimSpace(item.ID)
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+func extractListItemIDContaining(body []byte, needle string) (string, error) {
+	var doc struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return "", err
+	}
+	for _, item := range doc.Data {
+		itemBody, err := json.Marshal(item)
+		if err != nil {
+			return "", err
+		}
+		if !strings.Contains(string(itemBody), needle) {
+			continue
+		}
+		if id, _ := item["id"].(string); strings.TrimSpace(id) != "" {
+			return strings.TrimSpace(id), nil
+		}
+	}
+	return "", fmt.Errorf("missing item id for entry containing %q", needle)
+}
+
+func extractCompactionEncryptedContent(body []byte) (string, error) {
+	var doc struct {
+		Output []struct {
+			Type             string `json:"type"`
+			EncryptedContent string `json:"encrypted_content"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return "", err
+	}
+	for _, item := range doc.Output {
+		if strings.TrimSpace(item.Type) != "compaction" {
+			continue
+		}
+		blob := strings.TrimSpace(item.EncryptedContent)
+		if blob != "" {
+			return blob, nil
+		}
+	}
+	return "", errors.New("missing compaction encrypted_content")
+}
+
+func extractOutputItemTypes(body []byte) ([]string, error) {
+	var doc struct {
+		Output []struct {
+			Type string `json:"type"`
+		} `json:"output"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return nil, err
+	}
+	types := make([]string, 0, len(doc.Output))
+	for _, item := range doc.Output {
+		itemType := strings.TrimSpace(item.Type)
+		if itemType != "" {
+			types = append(types, itemType)
+		}
+	}
+	return types, nil
 }

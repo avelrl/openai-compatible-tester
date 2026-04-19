@@ -181,6 +181,8 @@ func TestCapabilitiesFromDebugManifestShimShape(t *testing.T) {
 
 	assertCapabilityStatus(t, cfg, "responses.store", config.CapabilityStatusSupported)
 	assertCapabilityStatus(t, cfg, "responses.input_items", config.CapabilityStatusSupported)
+	assertCapabilityStatus(t, cfg, "responses.compaction", config.CapabilityStatusSupported)
+	assertCapabilityStatus(t, cfg, "responses.compaction.auto", config.CapabilityStatusSupported)
 	assertCapabilityStatus(t, cfg, "responses.retrieve_stream", config.CapabilityStatusDisabled)
 	assertCapabilityStatus(t, cfg, "conversations.items", config.CapabilityStatusSupported)
 	assertCapabilityStatus(t, cfg, "chat.store", config.CapabilityStatusSupported)
