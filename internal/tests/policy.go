@@ -89,10 +89,10 @@ func deriveSpecOutcome(res Result) (Status, string, string) {
 		}
 		return StatusFail, "spec_violation", "missing canonical OpenAI error object"
 	case "chat.stream", "responses.stream":
-		if ev != nil && ev.CanonicalStreamTextSeen {
+		if ev != nil && ev.CanonicalStreamTextSeen && ev.CanonicalStreamTerminalSeen {
 			return StatusPass, "", ""
 		}
-		return StatusFail, "spec_violation", "missing canonical stream text events"
+		return StatusFail, "spec_violation", "missing canonical stream text or terminal events"
 	case "chat.tool_call", "chat.tool_call.required":
 		if ev != nil && ev.CanonicalToolCallSeen {
 			return StatusPass, "", ""

@@ -121,10 +121,10 @@ func TestAnalyzeSurfaceReadinessSeparatesProtocolFromExactness(t *testing.T) {
 	results := []tests.Result{
 		{TestID: "sanity.models", Profile: "p1", Status: tests.StatusPass},
 		{TestID: "chat.basic", Profile: "p1", Status: tests.StatusFail, HTTPStatus: 200, ErrorType: "assert", ErrorMessage: "expected OK", Evidence: &tests.Evidence{CanonicalTextSeen: true}},
-		{TestID: "chat.stream", Profile: "p1", Status: tests.StatusPass, Evidence: &tests.Evidence{CanonicalStreamTextSeen: true}},
+		{TestID: "chat.stream", Profile: "p1", Status: tests.StatusPass, Evidence: &tests.Evidence{CanonicalStreamTextSeen: true, CanonicalStreamTerminalSeen: true}},
 		{TestID: "chat.tool_call.required", Profile: "p1", Status: tests.StatusPass, Evidence: &tests.Evidence{CanonicalToolCallSeen: true}},
 		{TestID: "responses.basic", Profile: "p1", Status: tests.StatusFail, HTTPStatus: 200, ErrorType: "assert", ErrorMessage: "expected OK", Evidence: &tests.Evidence{CanonicalTextSeen: true}},
-		{TestID: "responses.stream", Profile: "p1", Status: tests.StatusPass, Evidence: &tests.Evidence{CanonicalStreamTextSeen: true}},
+		{TestID: "responses.stream", Profile: "p1", Status: tests.StatusPass, Evidence: &tests.Evidence{CanonicalStreamTextSeen: true, CanonicalStreamTerminalSeen: true}},
 		{TestID: "responses.tool_call.required", Profile: "p1", Status: tests.StatusFail, HTTPStatus: 200, ErrorType: "tool_call", ErrorMessage: "missing function call"},
 	}
 
@@ -186,7 +186,7 @@ func TestAnalyzeSurfaceReadinessNotesAutoOnlyResponsesToolCalling(t *testing.T) 
 
 	results := []tests.Result{
 		{TestID: "responses.basic", Profile: "p1", Status: tests.StatusPass, Evidence: &tests.Evidence{CanonicalTextSeen: true}},
-		{TestID: "responses.stream", Profile: "p1", Status: tests.StatusPass, Evidence: &tests.Evidence{CanonicalStreamTextSeen: true}},
+		{TestID: "responses.stream", Profile: "p1", Status: tests.StatusPass, Evidence: &tests.Evidence{CanonicalStreamTextSeen: true, CanonicalStreamTerminalSeen: true}},
 		{TestID: "responses.tool_call", Profile: "p1", Status: tests.StatusPass, ToolChoiceMode: "auto", FunctionCallObserved: true, Evidence: &tests.Evidence{CanonicalToolCallSeen: true}},
 		{TestID: "responses.tool_call.required", Profile: "p1", Status: tests.StatusFail, ErrorType: "http_status"},
 	}
@@ -377,7 +377,7 @@ func TestWriteReportsIncludesRequiredToolCallingRows(t *testing.T) {
 	}
 	results := []tests.Result{
 		{TestID: "responses.basic", TestName: "Responses basic", Profile: "p1", Status: tests.StatusPass, Evidence: &tests.Evidence{CanonicalTextSeen: true}},
-		{TestID: "responses.stream", TestName: "Responses stream", Profile: "p1", Status: tests.StatusPass, Evidence: &tests.Evidence{CanonicalStreamTextSeen: true}},
+		{TestID: "responses.stream", TestName: "Responses stream", Profile: "p1", Status: tests.StatusPass, Evidence: &tests.Evidence{CanonicalStreamTextSeen: true, CanonicalStreamTerminalSeen: true}},
 		{TestID: "responses.tool_call", TestName: "Responses tool calling", Profile: "p1", Status: tests.StatusPass, ToolChoiceMode: "auto", EffectiveToolChoice: "auto", ReasoningEffort: "low", LiteLLMTimeout: "60", FunctionCallObserved: true, Evidence: &tests.Evidence{CanonicalToolCallSeen: true}},
 		{TestID: "responses.tool_call.required", TestName: "Responses tool calling (required)", Profile: "p1", Status: tests.StatusFail, ToolChoiceMode: "required", EffectiveToolChoice: "auto", ToolChoiceFallback: true, ReasoningEffort: "low", LiteLLMTimeout: "60"},
 	}

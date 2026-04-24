@@ -219,6 +219,32 @@ func TestProjectForModeResponsesChatFallbackFailsInStrict(t *testing.T) {
 	}
 }
 
+func TestProjectForModeStreamRequiresTerminalEventInStrict(t *testing.T) {
+	res := Result{
+		TestID: "responses.stream",
+		Status: StatusPass,
+		Evidence: &Evidence{
+			CanonicalStreamTextSeen: true,
+		},
+	}
+
+	compat := ProjectForMode(res, config.ModeCompat)
+	if compat.Status != StatusPass {
+		t.Fatalf("compat status=%s", compat.Status)
+	}
+
+	strict := ProjectForMode(res, config.ModeStrict)
+	if strict.Status != StatusFail {
+		t.Fatalf("strict status=%s", strict.Status)
+	}
+
+	res.Evidence.CanonicalStreamTerminalSeen = true
+	strict = ProjectForMode(res, config.ModeStrict)
+	if strict.Status != StatusPass {
+		t.Fatalf("strict status after terminal=%s", strict.Status)
+	}
+}
+
 func TestProjectForModeErrorShapeRequiresCanonicalErrorObjectInStrict(t *testing.T) {
 	res := Result{
 		TestID:     "responses.error_shape",

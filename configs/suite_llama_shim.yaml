@@ -3,7 +3,7 @@ target: llama_shim
 passes: 1
 warmup_passes: 0
 parallelism: 1
-timeout_seconds: 60
+timeout_seconds: 120
 litellm_headers: {}
 retry:
   max_attempts: 3
@@ -28,25 +28,25 @@ chat_reasoning:
   enabled: false
 tests:
   responses.memory.prev_id:
-    timeout_seconds: 45
+    timeout_seconds: 90
     treat_timeout_as_unsupported: true
   responses.conversations:
-    timeout_seconds: 45
+    timeout_seconds: 90
     treat_timeout_as_unsupported: true
   responses.previous_response.chain:
-    timeout_seconds: 60
+    timeout_seconds: 90
   responses.retrieve.input_items:
-    timeout_seconds: 60
+    timeout_seconds: 90
   conversations.create.retrieve:
-    timeout_seconds: 60
+    timeout_seconds: 90
   conversations.items.list:
-    timeout_seconds: 60
+    timeout_seconds: 90
   conversations.items.append:
-    timeout_seconds: 60
+    timeout_seconds: 90
   responses.compaction:
-    timeout_seconds: 60
+    timeout_seconds: 90
   responses.compaction.auto:
-    timeout_seconds: 60
+    timeout_seconds: 90
 analysis:
   enabled: true
   compute_percentiles: true

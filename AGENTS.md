@@ -2,7 +2,7 @@
 
 Use this order every time:
 
-1. Start with the local docs index at [`openapi/llms.txt`](openapi/llms.txt).
+1. Start with the local docs index at [`docs/llms.txt`](docs/llms.txt).
    Use it as a map of relevant official pages only.
    It is not the source of truth for exact request or response contracts.
 2. Use OpenAI Docs MCP tools against `developers.openai.com` and `platform.openai.com`.

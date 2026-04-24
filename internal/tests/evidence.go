@@ -16,6 +16,7 @@ type Evidence struct {
 	CanonicalToolCallSeen        bool     `json:"canonical_tool_call_seen,omitempty"`
 	CanonicalCustomToolCallSeen  bool     `json:"canonical_custom_tool_call_seen,omitempty"`
 	CanonicalStreamTextSeen      bool     `json:"canonical_stream_text_seen,omitempty"`
+	CanonicalStreamTerminalSeen  bool     `json:"canonical_stream_terminal_seen,omitempty"`
 	CanonicalStreamToolCallSeen  bool     `json:"canonical_stream_tool_call_seen,omitempty"`
 	FallbackChatShapeOnResponses bool     `json:"fallback_chat_shape_on_responses,omitempty"`
 	FallbackChatToolCallOnResp   bool     `json:"fallback_chat_tool_call_on_responses,omitempty"`

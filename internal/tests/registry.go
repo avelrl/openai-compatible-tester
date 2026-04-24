@@ -217,90 +217,90 @@ func Registry() []TestCase {
 			RequiresMemory: true,
 			Run:            runResponsesMemory,
 		},
-			{
-				ID:                    "responses.conversations",
-				Name:                  "Responses conversations",
-				Category:              "responses",
-				Kind:                  KindResponses,
-				RequiresConversations: true,
-				Run:                   runResponsesConversations,
-			},
-			{
-				ID:                   "responses.previous_response.chain",
-				Name:                 "Responses previous_response_id chain",
-				Category:             "responses",
-				Family:               "state",
-				Target:               "llama_shim",
-				Kind:                 KindResponses,
-				RequiresMemory:       true,
-				RequiredCapabilities: []string{"responses.store"},
-				Run:                  runLlamaShimResponsesPreviousResponseChain,
-			},
-			{
-				ID:                   "responses.retrieve.input_items",
-				Name:                 "Responses retrieve input_items",
-				Category:             "responses",
-				Family:               "state",
-				Target:               "llama_shim",
-				Kind:                 KindResponses,
-				RequiredCapabilities: []string{"responses.input_items"},
-				Run:                  runLlamaShimResponsesRetrieveInputItems,
-			},
-			{
-				ID:                    "conversations.create.retrieve",
-				Name:                  "Conversations create + GET",
-				Category:              "responses",
-				Family:                "state",
-				Target:                "llama_shim",
-				Kind:                  KindResponses,
-				RequiresConversations: true,
-				Run:                   runLlamaShimConversationsCreateRetrieve,
-			},
-			{
-				ID:                    "conversations.items.list",
-				Name:                  "Conversations list items",
-				Category:              "responses",
-				Family:                "state",
-				Target:                "llama_shim",
-				Kind:                  KindResponses,
-				RequiresConversations: true,
-				RequiredCapabilities:  []string{"conversations.items"},
-				Run:                   runLlamaShimConversationsItemsList,
-			},
-			{
-				ID:                    "conversations.items.append",
-				Name:                  "Conversations append items",
-				Category:              "responses",
-				Family:                "state",
-				Target:                "llama_shim",
-				Kind:                  KindResponses,
-				RequiresConversations: true,
-				RequiredCapabilities:  []string{"conversations.items"},
-				Run:                   runLlamaShimConversationsItemsAppend,
-			},
-			{
-				ID:                   "responses.compaction",
-				Name:                 "Responses compaction",
-				Category:             "responses",
-				Family:               "compaction",
-				Target:               "llama_shim",
-				Kind:                 KindResponses,
-				RequiredCapabilities: []string{"responses.compaction"},
-				Run:                  runLlamaShimResponsesCompaction,
-			},
-			{
-				ID:                   "responses.compaction.auto",
-				Name:                 "Responses auto compaction",
-				Category:             "responses",
-				Family:               "compaction",
-				Target:               "llama_shim",
-				Kind:                 KindResponses,
-				RequiredCapabilities: []string{"responses.compaction.auto", "responses.store"},
-				Run:                  runLlamaShimResponsesAutoCompaction,
-			},
-			{
-				ID:       "chat.basic",
-				Name:     "Chat completions basic",
+		{
+			ID:                    "responses.conversations",
+			Name:                  "Responses conversations",
+			Category:              "responses",
+			Kind:                  KindResponses,
+			RequiresConversations: true,
+			Run:                   runResponsesConversations,
+		},
+		{
+			ID:                   "responses.previous_response.chain",
+			Name:                 "Responses previous_response_id chain",
+			Category:             "responses",
+			Family:               "state",
+			Target:               "llama_shim",
+			Kind:                 KindResponses,
+			RequiresMemory:       true,
+			RequiredCapabilities: []string{"responses.store"},
+			Run:                  runLlamaShimResponsesPreviousResponseChain,
+		},
+		{
+			ID:                   "responses.retrieve.input_items",
+			Name:                 "Responses retrieve input_items",
+			Category:             "responses",
+			Family:               "state",
+			Target:               "llama_shim",
+			Kind:                 KindResponses,
+			RequiredCapabilities: []string{"responses.input_items"},
+			Run:                  runLlamaShimResponsesRetrieveInputItems,
+		},
+		{
+			ID:                    "conversations.create.retrieve",
+			Name:                  "Conversations create + GET",
+			Category:              "responses",
+			Family:                "state",
+			Target:                "llama_shim",
+			Kind:                  KindResponses,
+			RequiresConversations: true,
+			Run:                   runLlamaShimConversationsCreateRetrieve,
+		},
+		{
+			ID:                    "conversations.items.list",
+			Name:                  "Conversations list items",
+			Category:              "responses",
+			Family:                "state",
+			Target:                "llama_shim",
+			Kind:                  KindResponses,
+			RequiresConversations: true,
+			RequiredCapabilities:  []string{"conversations.items"},
+			Run:                   runLlamaShimConversationsItemsList,
+		},
+		{
+			ID:                    "conversations.items.append",
+			Name:                  "Conversations append items",
+			Category:              "responses",
+			Family:                "state",
+			Target:                "llama_shim",
+			Kind:                  KindResponses,
+			RequiresConversations: true,
+			RequiredCapabilities:  []string{"conversations.items"},
+			Run:                   runLlamaShimConversationsItemsAppend,
+		},
+		{
+			ID:                   "responses.compaction",
+			Name:                 "Responses compaction",
+			Category:             "responses",
+			Family:               "compaction",
+			Target:               "llama_shim",
+			Kind:                 KindResponses,
+			RequiredCapabilities: []string{"responses.compaction"},
+			Run:                  runLlamaShimResponsesCompaction,
+		},
+		{
+			ID:                   "responses.compaction.auto",
+			Name:                 "Responses auto compaction",
+			Category:             "responses",
+			Family:               "compaction",
+			Target:               "llama_shim",
+			Kind:                 KindResponses,
+			RequiredCapabilities: []string{"responses.compaction.auto", "responses.store"},
+			Run:                  runLlamaShimResponsesAutoCompaction,
+		},
+		{
+			ID:       "chat.basic",
+			Name:     "Chat completions basic",
 			Category: "chat",
 			Kind:     KindChat,
 			Run:      runChatBasic,
@@ -1312,17 +1312,16 @@ func runChatStream(ctx context.Context, rc RunContext) Result {
 		}
 		raw.WriteString(ev.Data)
 		raw.WriteString("\n")
-		appendStreamEventType(&result, "chat.completions.chunk")
-		delta, isDone := parseChatStreamEvent(ev.Data)
+		delta, isDone, terminal, eventType := parseChatStreamEventDetailed(ev.Data)
+		appendStreamEventType(&result, eventType)
 		if delta != "" {
 			text.WriteString(delta)
 			ensureEvidence(&result).CanonicalStreamTextSeen = true
-			if normalizeStreamText(text.String()) == "HELLO" {
-				done = true
-				return sse.ErrStop
-			}
 		}
 		if isDone {
+			if terminal {
+				ensureEvidence(&result).CanonicalStreamTerminalSeen = true
+			}
 			done = true
 			return sse.ErrStop
 		}
@@ -1347,7 +1346,7 @@ func runChatStream(ctx context.Context, rc RunContext) Result {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return failHTTPStatusResult(result, resp)
 	}
-	if !done {
+	if !done && (resp == nil || !resp.Done) {
 		return failResult(result, errors.New("stream did not terminate"), "stream")
 	}
 	if strings.TrimSpace(text.String()) == "" {
@@ -2743,20 +2742,25 @@ func extractUsageTokens(body []byte) int {
 }
 
 func parseChatStreamEvent(data string) (string, bool) {
+	delta, done, _, _ := parseChatStreamEventDetailed(data)
+	return delta, done
+}
+
+func parseChatStreamEventDetailed(data string) (string, bool, bool, string) {
 	if strings.TrimSpace(data) == "[DONE]" {
-		return "", true
+		return "", true, true, "[DONE]"
 	}
 	var doc map[string]interface{}
 	if err := json.Unmarshal([]byte(data), &doc); err != nil {
-		return "", false
+		return "", false, false, ""
 	}
 	choices, ok := doc["choices"].([]interface{})
 	if !ok || len(choices) == 0 {
-		return "", false
+		return "", false, false, ""
 	}
 	c0, _ := choices[0].(map[string]interface{})
 	if c0 == nil {
-		return "", false
+		return "", false, false, ""
 	}
 	delta, ok := c0["delta"].(map[string]interface{})
 	var content string
@@ -2764,9 +2768,9 @@ func parseChatStreamEvent(data string) (string, bool) {
 		content, _ = delta["content"].(string)
 	}
 	if finish, ok := c0["finish_reason"].(string); ok && finish != "" {
-		return content, true
+		return content, true, true, "chat.completions.chunk"
 	}
-	return content, false
+	return content, false, false, "chat.completions.chunk"
 }
 
 func parseResponsesStreamEvent(data string) (string, bool) {
@@ -2852,20 +2856,25 @@ func runResponsesStream(ctx context.Context, rc RunContext) Result {
 		delta, isDone, canonical, eventType := parseResponsesStreamEventDetailed(ev.Data)
 		appendStreamEventType(&result, eventType)
 		if delta != "" {
-			text.WriteString(delta)
+			if eventType != "response.output_text.done" || text.Len() == 0 {
+				text.WriteString(delta)
+			}
 			if canonical {
 				ensureEvidence(&result).CanonicalStreamTextSeen = true
 			} else {
 				ensureEvidence(&result).FallbackStreamTextSeen = true
 			}
-			if normalizeStreamText(text.String()) == "HELLO" {
+		}
+		if isDone {
+			if eventType == "response.completed" {
+				ensureEvidence(&result).CanonicalStreamTerminalSeen = true
 				done = true
 				return sse.ErrStop
 			}
-		}
-		if isDone {
-			done = true
-			return sse.ErrStop
+			if eventType == "[DONE]" {
+				done = true
+				return sse.ErrStop
+			}
 		}
 		return nil
 	})
@@ -2888,7 +2897,7 @@ func runResponsesStream(ctx context.Context, rc RunContext) Result {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return failHTTPStatusResult(result, resp)
 	}
-	if !done {
+	if !done && (resp == nil || !resp.Done) {
 		return failResult(result, errors.New("stream did not terminate"), "stream")
 	}
 	if strings.TrimSpace(text.String()) == "" {
