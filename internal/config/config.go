@@ -16,12 +16,12 @@ import (
 )
 
 const (
-	DefaultSuitePath     = "configs/suite.yaml"
-	DefaultModelsPath    = "configs/models.yaml"
-	DefaultEndpointsPath = "configs/endpoints.yaml"
-	DefaultClientsPath   = "configs/clients.yaml"
-	ModeCompat           = "compat"
-	ModeStrict           = "strict"
+	DefaultSuitePath            = "configs/suite.yaml"
+	DefaultModelsPath           = "configs/models.yaml"
+	DefaultEndpointsPath        = "configs/endpoints.yaml"
+	DefaultClientsPath          = "configs/clients.yaml"
+	ModeCompat                  = "compat"
+	ModeStrict                  = "strict"
 	CapabilityStatusSupported   = "supported"
 	CapabilityStatusUnsupported = "unsupported"
 	CapabilityStatusDisabled    = "disabled"
@@ -29,14 +29,15 @@ const (
 )
 
 type Config struct {
-	Endpoints EndpointsConfig
-	Models    ModelsConfig
-	Suite     SuiteConfig
-	Clients   ClientsConfig
+	Endpoints    EndpointsConfig
+	Models       ModelsConfig
+	Suite        SuiteConfig
+	Clients      ClientsConfig
 	Capabilities CapabilitiesConfig
 
-	BaseURL string
-	APIKey  string
+	BaseURL       string
+	BaseURLSource string
+	APIKey        string
 
 	Profile         string
 	OutDir          string
@@ -55,10 +56,10 @@ type EndpointsConfig struct {
 }
 
 type EndpointsPaths struct {
-	Models        string `yaml:"models"`
-	Chat          string `yaml:"chat"`
-	Responses     string `yaml:"responses"`
-	Conversations string `yaml:"conversations"`
+	Models            string `yaml:"models"`
+	Chat              string `yaml:"chat"`
+	Responses         string `yaml:"responses"`
+	Conversations     string `yaml:"conversations"`
 	DebugCapabilities string `yaml:"debug_capabilities"`
 }
 
@@ -203,13 +204,13 @@ type CodexReviewConfig struct {
 }
 
 type LoadOptions struct {
-	SuitePath     string
-	ModelsPath    string
-	EndpointsPath string
-	ClientsPath   string
+	SuitePath        string
+	ModelsPath       string
+	EndpointsPath    string
+	ClientsPath      string
 	CapabilitiesPath string
-	EnvFile       string
-	Mode          string
+	EnvFile          string
+	Mode             string
 
 	BaseURL    string
 	APIKey     string
@@ -282,18 +283,20 @@ func Load(opts LoadOptions) (Config, error) {
 		return cfg, err
 	}
 
-	// Base URL precedence: YAML < .env < OS env < flag
-	baseURL := firstNonEmpty(
-		envMap["BASE_URL"],
-		envMap["OPENAI_BASE_URL"],
-		os.Getenv("BASE_URL"),
-		os.Getenv("OPENAI_BASE_URL"),
-		cfg.Endpoints.BaseURL,
+	// Base URL precedence: YAML < OS env < env file < flag
+	baseURL, baseURLSource := firstNonEmptyWithSource(
+		valueWithSource{value: envMap["BASE_URL"], source: "env file BASE_URL"},
+		valueWithSource{value: envMap["OPENAI_BASE_URL"], source: "env file OPENAI_BASE_URL"},
+		valueWithSource{value: os.Getenv("BASE_URL"), source: "environment BASE_URL"},
+		valueWithSource{value: os.Getenv("OPENAI_BASE_URL"), source: "environment OPENAI_BASE_URL"},
+		valueWithSource{value: cfg.Endpoints.BaseURL, source: "endpoints.base_url"},
 	)
 	if opts.BaseURL != "" {
 		baseURL = opts.BaseURL
+		baseURLSource = "--base-url"
 	}
 	cfg.BaseURL = normalizeBaseURL(baseURL)
+	cfg.BaseURLSource = baseURLSource
 
 	// API key from env var name in endpoints.yaml
 	apiKeyEnv := strings.TrimSpace(cfg.Endpoints.APIKeyEnv)
@@ -432,13 +435,13 @@ func (c Config) Validate() error {
 	for _, endpoint := range []struct {
 		name string
 		path string
-		}{
-			{name: "models", path: c.Endpoints.Paths.Models},
-			{name: "chat", path: c.Endpoints.Paths.Chat},
-			{name: "responses", path: c.Endpoints.Paths.Responses},
-			{name: "conversations", path: c.Endpoints.Paths.Conversations},
-			{name: "debug_capabilities", path: c.Endpoints.Paths.DebugCapabilities},
-		} {
+	}{
+		{name: "models", path: c.Endpoints.Paths.Models},
+		{name: "chat", path: c.Endpoints.Paths.Chat},
+		{name: "responses", path: c.Endpoints.Paths.Responses},
+		{name: "conversations", path: c.Endpoints.Paths.Conversations},
+		{name: "debug_capabilities", path: c.Endpoints.Paths.DebugCapabilities},
+	} {
 		if hasPathOverlap(parsedBaseURL.Path, endpoint.path) {
 			return fmt.Errorf("endpoints.%s path %q overlaps with base_url path %q; remove the duplicated prefix", endpoint.name, endpoint.path, parsedBaseURL.Path)
 		}
@@ -858,4 +861,18 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+type valueWithSource struct {
+	value  string
+	source string
+}
+
+func firstNonEmptyWithSource(values ...valueWithSource) (string, string) {
+	for _, v := range values {
+		if strings.TrimSpace(v.value) != "" {
+			return strings.TrimSpace(v.value), strings.TrimSpace(v.source)
+		}
+	}
+	return "", ""
 }

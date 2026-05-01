@@ -170,11 +170,50 @@ func TestLoadConfigPrecedence(t *testing.T) {
 	if cfg.BaseURL != "https://flag.example.com" {
 		t.Fatalf("BaseURL=%q", cfg.BaseURL)
 	}
+	if cfg.BaseURLSource != "--base-url" {
+		t.Fatalf("BaseURLSource=%q", cfg.BaseURLSource)
+	}
 	if cfg.APIKey != "flagkey" {
 		t.Fatalf("APIKey=%q", cfg.APIKey)
 	}
 	if len(cfg.Clients.Targets) != 1 || cfg.Clients.Targets[0].ID != "codex-cli" {
 		t.Fatalf("clients not loaded: %+v", cfg.Clients.Targets)
+	}
+}
+
+func TestLoadRecordsEnvFileBaseURLSource(t *testing.T) {
+	dir := t.TempDir()
+	suite := filepath.Join(dir, "suite.yaml")
+	models := filepath.Join(dir, "models.yaml")
+	endpoints := filepath.Join(dir, "endpoints.yaml")
+	if err := os.WriteFile(suite, []byte("passes: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(models, []byte("profiles:\n  - name: default\n    chat_model: chat\n    responses_model: resp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpoints, []byte("base_url: https://yaml.example.com\napi_key_env: OPENAI_API_KEY\npaths:\n  models: /v1/models\n  chat: /v1/chat/completions\n  responses: /v1/responses\n  conversations: /v1/conversations\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	envFile := filepath.Join(dir, ".env")
+	if err := os.WriteFile(envFile, []byte("OPENAI_API_KEY=fromenv\nBASE_URL=https://env.example.com\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Load(LoadOptions{
+		SuitePath:     suite,
+		ModelsPath:    models,
+		EndpointsPath: endpoints,
+		EnvFile:       envFile,
+	})
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+	if cfg.BaseURL != "https://env.example.com" {
+		t.Fatalf("BaseURL=%q", cfg.BaseURL)
+	}
+	if cfg.BaseURLSource != "env file BASE_URL" {
+		t.Fatalf("BaseURLSource=%q", cfg.BaseURLSource)
 	}
 }
 

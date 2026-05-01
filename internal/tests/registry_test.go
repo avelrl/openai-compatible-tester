@@ -1071,7 +1071,29 @@ func TestEffectiveTraceStepsFallsBackToMainSnippet(t *testing.T) {
 	}
 }
 
+func TestEffectiveFullTraceStepsPrefersUnclippedFullTrace(t *testing.T) {
+	res := Result{
+		RequestSnippet:  "short req",
+		ResponseSnippet: "short resp...",
+		FullTraceSteps: []TraceStep{{
+			Name:     "main",
+			Request:  "full req",
+			Response: "full response tail",
+		}},
+	}
+	steps := EffectiveFullTraceSteps(res)
+	if len(steps) != 1 {
+		t.Fatalf("expected 1 full trace step, got %d", len(steps))
+	}
+	if steps[0].Request != "full req" || steps[0].Response != "full response tail" {
+		t.Fatalf("unexpected full trace step: %+v", steps[0])
+	}
+}
+
 func TestRunChatStreamAppliesReasoningOverride(t *testing.T) {
+	setSnippetLimit(64)
+	t.Cleanup(func() { setSnippetLimit(4096) })
+
 	var gotBody map[string]interface{}
 	cfg := config.Config{
 		BaseURL: "https://example.test",
@@ -1114,7 +1136,12 @@ func TestRunChatStreamAppliesReasoningOverride(t *testing.T) {
 				if err := json.Unmarshal(body, &gotBody); err != nil {
 					t.Fatalf("unmarshal body: %v", err)
 				}
-				return stringResponse(http.StatusOK, "text/event-stream", "data: {\"choices\":[{\"delta\":{\"content\":\"HELLO\"},\"finish_reason\":\"stop\"}]}\n\n"), nil
+				var stream strings.Builder
+				for i := 0; i < 5; i++ {
+					stream.WriteString("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"index\":0}]}\n\n")
+				}
+				stream.WriteString("data: {\"choices\":[{\"delta\":{\"content\":\"HELLO\"},\"finish_reason\":\"stop\"}]}\n\n")
+				return stringResponse(http.StatusOK, "text/event-stream", stream.String()), nil
 			}),
 		},
 	)
@@ -1132,6 +1159,16 @@ func TestRunChatStreamAppliesReasoningOverride(t *testing.T) {
 	}
 	if got, ok := gotBody["max_tokens"].(float64); !ok || got != 8 {
 		t.Fatalf("max_tokens=%v, want 8", gotBody["max_tokens"])
+	}
+	if !strings.HasSuffix(res.ResponseSnippet, "...") {
+		t.Fatalf("expected clipped response snippet, got %q", res.ResponseSnippet)
+	}
+	fullSteps := EffectiveFullTraceSteps(res)
+	if len(fullSteps) != 1 {
+		t.Fatalf("expected 1 full trace step, got %d", len(fullSteps))
+	}
+	if !strings.Contains(fullSteps[0].Response, "TEXT:\nHELLO") {
+		t.Fatalf("full trace missing stream text: %q", fullSteps[0].Response)
 	}
 }
 

@@ -231,7 +231,7 @@ func WriteFullLogJSONL(outDir string, results []tests.Result) error {
 			FunctionCallObserved: r.FunctionCallObserved,
 			IsWarmup:             r.IsWarmup,
 			Evidence:             r.Evidence,
-			Steps:                tests.EffectiveTraceSteps(r),
+			Steps:                tests.EffectiveFullTraceSteps(r),
 		}
 		if err := enc.Encode(rec); err != nil {
 			return err
@@ -254,6 +254,7 @@ func WriteSummaryMarkdown(outDir string, summary Summary, analysis Analysis) err
 	fmt.Fprintf(f, "# OpenAI Compatibility Test Summary\n\n")
 	fmt.Fprintf(f, "**Environment**\n\n")
 	fmt.Fprintf(f, "- Base URL: %s\n", summary.Config.BaseURL)
+	fmt.Fprintf(f, "- Base URL source: %s\n", summary.Config.BaseURLSource)
 	fmt.Fprintf(f, "- Primary mode: %s\n", summary.Config.Suite.Mode)
 	fmt.Fprintf(f, "- Date: %s\n", summary.EndedAt.Format(time.RFC3339))
 	fmt.Fprintf(f, "- Version: %s\n\n", ToolVersion)
@@ -317,13 +318,14 @@ func WriteSummaryJSON(outDir string, summary Summary, analysis Analysis) error {
 	}
 	defer f.Close()
 	payload := map[string]interface{}{
-		"base_url":     summary.Config.BaseURL,
-		"version":      ToolVersion,
-		"started_at":   summary.StartedAt.Format(time.RFC3339),
-		"ended_at":     summary.EndedAt.Format(time.RFC3339),
-		"primary_mode": summary.Config.Suite.Mode,
-		"results":      summary.Results,
-		"analysis":     analysis,
+		"base_url":        summary.Config.BaseURL,
+		"base_url_source": summary.Config.BaseURLSource,
+		"version":         ToolVersion,
+		"started_at":      summary.StartedAt.Format(time.RFC3339),
+		"ended_at":        summary.EndedAt.Format(time.RFC3339),
+		"primary_mode":    summary.Config.Suite.Mode,
+		"results":         summary.Results,
+		"analysis":        analysis,
 	}
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")

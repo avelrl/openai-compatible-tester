@@ -14,8 +14,9 @@ import (
 func TestWriteReports(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Config{
-		BaseURL: "https://example.com",
-		Suite:   config.SuiteConfig{Analysis: config.AnalysisConfig{ComputePercentiles: true, Percentiles: []int{50, 95, 99}}},
+		BaseURL:       "https://example.com",
+		BaseURLSource: "env file BASE_URL",
+		Suite:         config.SuiteConfig{Analysis: config.AnalysisConfig{ComputePercentiles: true, Percentiles: []int{50, 95, 99}}},
 		Clients: config.ClientsConfig{Targets: []config.ClientTarget{
 			{
 				ID:       "codex-cli",
@@ -35,7 +36,7 @@ func TestWriteReports(t *testing.T) {
 		}},
 	}
 	results := []tests.Result{
-		{TestID: "t1", TestName: "Test1", Profile: "p1", Pass: 1, Status: tests.StatusPass, LatencyMS: 10, TraceSteps: []tests.TraceStep{{Name: "main", Request: "{\"ok\":true}", Response: "{\"ok\":true}"}}},
+		{TestID: "t1", TestName: "Test1", Profile: "p1", Pass: 1, Status: tests.StatusPass, LatencyMS: 10, ResponseSnippet: "clipped...", TraceSteps: []tests.TraceStep{{Name: "main", Request: "{\"ok\":true}", Response: "clipped..."}}, FullTraceSteps: []tests.TraceStep{{Name: "main", Request: "{\"ok\":true}", Response: "{\"ok\":true,\"tail\":\"full stream\"}"}}},
 		{TestID: "t1", TestName: "Test1", Profile: "p1", Pass: 2, Status: tests.StatusFail, LatencyMS: 20},
 		{TestID: "t2", TestName: "Test2", Profile: "p1", Pass: 1, Status: tests.StatusUnsupported, ErrorType: "endpoint_missing", ErrorMessage: "missing endpoint"},
 	}
@@ -74,6 +75,9 @@ func TestWriteReports(t *testing.T) {
 	if !strings.Contains(content, "\"name\":\"main\"") {
 		t.Fatalf("full_log.jsonl missing step name: %s", content)
 	}
+	if !strings.Contains(content, "full stream") {
+		t.Fatalf("full_log.jsonl missing full trace response: %s", content)
+	}
 
 	summaryMD, err := os.ReadFile(filepath.Join(dir, "summary.md"))
 	if err != nil {
@@ -81,6 +85,9 @@ func TestWriteReports(t *testing.T) {
 	}
 	if !strings.Contains(string(summaryMD), "OpenAI spec conformance") {
 		t.Fatalf("summary.md missing spec block: %s", string(summaryMD))
+	}
+	if !strings.Contains(string(summaryMD), "Base URL source: env file BASE_URL") {
+		t.Fatalf("summary.md missing base URL source: %s", string(summaryMD))
 	}
 	if !strings.Contains(string(summaryMD), "Compatibility") {
 		t.Fatalf("summary.md missing compatibility block: %s", string(summaryMD))

@@ -63,6 +63,7 @@ type Result struct {
 	RequestSnippet       string
 	ResponseSnippet      string
 	TraceSteps           []TraceStep
+	FullTraceSteps       []TraceStep `json:"-"`
 	ToolChoiceMode       string
 	EffectiveToolChoice  string
 	ToolChoiceFallback   bool
@@ -1302,7 +1303,8 @@ func runChatStream(ctx context.Context, rc RunContext) Result {
 	instruction := overridePromptText(ov.InstructionText, "Reply with exactly HELLO and nothing else. Stream it one character at a time.")
 	userPrompt := overridePromptText(ov.UserText, "go")
 	payload["messages"] = chatMessagesWithInstruction(rc.Config, rc.Profile, "chat.stream", "developer", instruction, userPrompt)
-	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
+	requestTrace := prettyJSON(payload)
+	result.RequestSnippet = clip(requestTrace, snippetLimit)
 	var text strings.Builder
 	var raw strings.Builder
 	done := false
@@ -1328,14 +1330,14 @@ func runChatStream(ctx context.Context, rc RunContext) Result {
 		return nil
 	})
 	if err != nil {
-		result.ResponseSnippet = clip("SSE:\n"+raw.String()+"\nTEXT:\n"+text.String(), snippetLimit)
+		recordStreamTrace(&result, requestTrace, raw.String(), text.String())
 		return failResult(result, err, "http_error")
 	}
 	result.HTTPStatus = resp.StatusCode
 	result.LatencyMS = resp.Latency.Milliseconds()
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
-	result.ResponseSnippet = clip("SSE:\n"+raw.String()+"\nTEXT:\n"+text.String(), snippetLimit)
+	recordStreamTrace(&result, requestTrace, raw.String(), text.String())
 	recordChatBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
@@ -1922,6 +1924,20 @@ func withTraceStep(result *Result, name, request, response string) {
 	result.TraceSteps = append(result.TraceSteps, step)
 }
 
+func withFullTraceStep(result *Result, name, request, response string) {
+	if result == nil {
+		return
+	}
+	step := TraceStep{Name: name}
+	if request != "" {
+		step.Request = trimLeadingBlankLines(request)
+	}
+	if response != "" {
+		step.Response = trimLeadingBlankLines(response)
+	}
+	result.FullTraceSteps = append(result.FullTraceSteps, step)
+}
+
 func updateTraceStepResponse(result *Result, name, response string) {
 	if result == nil {
 		return
@@ -1948,6 +1964,22 @@ func EffectiveTraceSteps(result Result) []TraceStep {
 		Request:  result.RequestSnippet,
 		Response: result.ResponseSnippet,
 	}}
+}
+
+func EffectiveFullTraceSteps(result Result) []TraceStep {
+	if len(result.FullTraceSteps) > 0 {
+		return result.FullTraceSteps
+	}
+	return EffectiveTraceSteps(result)
+}
+
+func recordStreamTrace(result *Result, request, raw, text string) {
+	if result == nil {
+		return
+	}
+	trace := "SSE:\n" + raw + "\nTEXT:\n" + text
+	result.ResponseSnippet = clip(trace, result.snippetLimit)
+	withFullTraceStep(result, "main", request, trace)
 }
 
 func clip(s string, n int) string {
@@ -2843,7 +2875,8 @@ func runResponsesStream(ctx context.Context, rc RunContext) Result {
 	}
 	payload["stream"] = true
 	payload["input"] = responsesInstructionInput(rc.Config, rc.Profile, "responses.stream", "system", "Reply with exactly HELLO and nothing else.", "go")
-	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
+	requestTrace := prettyJSON(payload)
+	result.RequestSnippet = clip(requestTrace, snippetLimit)
 	var text strings.Builder
 	var raw strings.Builder
 	done := false
@@ -2879,14 +2912,14 @@ func runResponsesStream(ctx context.Context, rc RunContext) Result {
 		return nil
 	})
 	if err != nil {
-		result.ResponseSnippet = clip("SSE:\n"+raw.String()+"\nTEXT:\n"+text.String(), snippetLimit)
+		recordStreamTrace(&result, requestTrace, raw.String(), text.String())
 		return failResult(result, err, "http_error")
 	}
 	result.HTTPStatus = resp.StatusCode
 	result.LatencyMS = resp.Latency.Milliseconds()
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
-	result.ResponseSnippet = clip("SSE:\n"+raw.String()+"\nTEXT:\n"+text.String(), snippetLimit)
+	recordStreamTrace(&result, requestTrace, raw.String(), text.String())
 	recordResponsesBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))

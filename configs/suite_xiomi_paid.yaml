@@ -1,0 +1,91 @@
+passes: 5
+warmup_passes: 1
+parallelism: 1
+timeout_seconds: 60
+litellm_headers: {}
+retry:
+  max_attempts: 2
+  backoff_ms: 250
+  rate_limit_max_attempts: 2
+  rate_limit_fallback_ms: 5000
+  retry_on_status: [429, 500, 502, 503, 504]
+  test_retries: 0
+stream:
+  enabled: true
+tool_calling:
+  enabled: true
+structured_outputs:
+  enabled: true
+conversations:
+  enabled: false
+memory:
+  enabled: true
+chat_reasoning:
+  enabled: false
+tests:
+  # Xiaomi exposes chat completions only; /v1/responses is not available.
+  responses.basic:
+    enabled: false
+  responses.stream:
+    enabled: false
+  responses.error_shape:
+    enabled: false
+  responses.memory.prev_id:
+    enabled: false
+  responses.conversations:
+    enabled: false
+  responses.previous_response.chain:
+    enabled: false
+  responses.retrieve.input_items:
+    enabled: false
+  responses.store_get:
+    enabled: false
+  responses.compaction:
+    enabled: false
+  responses.compaction.auto:
+    enabled: false
+  responses.structured.json_schema:
+    enabled: false
+  responses.structured.json_object:
+    enabled: false
+  responses.tool_call:
+    enabled: false
+  responses.tool_call.required:
+    enabled: false
+  responses.custom_tool:
+    enabled: false
+  responses.custom_tool.grammar:
+    enabled: false
+  chat.tool_call:
+    timeout_seconds: 60
+    tool_choice_mode: forced
+    forced_tool_name: add
+    parallel_tool_calls: false
+    max_tokens: 64
+    strict_mode: false
+  chat.tool_call.required:
+    timeout_seconds: 60
+    tool_choice_mode: required
+    parallel_tool_calls: false
+    max_tokens: 64
+    strict_mode: false
+  chat.structured.json_schema:
+    timeout_seconds: 60
+    max_tokens: 48
+  chat.structured.json_object:
+    timeout_seconds: 60
+    max_tokens: 48
+analysis:
+  enabled: true
+  compute_percentiles: true
+  percentiles: [50, 90, 95]
+  flakiness: false
+  fail_on_flaky: false
+codex_review:
+  enabled: false
+  codex_bin: "codex"
+  model: "gpt-5.4"
+  reasoning_effort: "high"
+  sandbox: "read-only"
+  approvals: "never"
+  prompt_template: ""

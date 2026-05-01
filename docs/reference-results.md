@@ -23,6 +23,8 @@ These are intentionally summarized here instead of committing raw `reports/` out
 | `nvidia-nemotron-3-super-120b-a12b` | `chat` | `READY` | Core agent chat paths are green on the public NVIDIA hosted endpoint; `chat.error_shape` still returns `500` on invalid payloads. |
 | `nvidia-qwen3-next-80b-a3b-instruct` | `chat` | `READY` | Green chat reference on the public NVIDIA hosted endpoint with profile-specific `system` role overrides for `chat.basic` and `chat.stream`. |
 | `nvidia-kimi-k2.5` | `chat` | `READY?` | Provisional chat reference on the public NVIDIA hosted endpoint; current tuned profile is green, but `chat.structured.json_schema` has flaked in neighboring runs. |
+| `xiaomimimo-mimo-v2.5-pro` | `chat` | `READY` | Direct Xiaomi MiMo platform run, no `llama_shim` or local proxy. Five non-warmup runs passed the core chat matrix; strict-only `chat.error_shape` remains non-canonical. |
+| `xiaomimimo-mimo-v2.5` | `chat` | `READY` | Direct Xiaomi MiMo platform run, no `llama_shim` or local proxy. Five non-warmup runs passed the core chat matrix with `system` role overrides for `chat.basic` and `chat.stream`; strict-only `chat.error_shape` remains non-canonical. |
 
 ## Official OpenAI baselines
 
@@ -107,6 +109,14 @@ go run . \
   --out-dir reports
 ```
 
+```bash
+go run . \
+  --base-url https://token-plan-sgp.xiaomimimo.com/v1 \
+  --models configs/models_xiomi.yaml \
+  --suite configs/suite_xiomi_paid.yaml \
+  --out-dir reports
+```
+
 ## Notes
 
 - `openrouter-kimi-k2.5` keeps the tuned overrides directly in [models_openrouter_paid.yaml](../configs/models_openrouter_paid.yaml).
@@ -114,6 +124,9 @@ go run . \
 - `nvidia-nemotron-3-super-120b-a12b` is a practical `chat` reference for core agent paths, but not a strict error-semantics reference because invalid payloads currently return `500` instead of `4xx`.
 - `nvidia-qwen3-next-80b-a3b-instruct` keeps `chat.basic` and `chat.stream` on `instruction_role: system` in [models_nvidia.yaml](../configs/models_nvidia.yaml).
 - `nvidia-kimi-k2.5` currently uses tuned overrides in [models_nvidia.yaml](../configs/models_nvidia.yaml) for tool-calling and structured output, plus a longer 429 fallback in the suite config. Keep it marked with a question mark for now because `chat.structured.json_schema` has failed in some nearby runs.
-- Public references should come from OpenRouter-style public endpoints, not private gateway runs.
+- `xiaomimimo-mimo-v2.5-pro` and `xiaomimimo-mimo-v2.5` are `chat`-only references. Xiaomi does not document a `/v1/responses` surface on the linked OpenAI-compatible API page, so Responses tests are intentionally disabled for these profiles.
+- `xiaomimimo-mimo-v2.5` keeps `chat.basic` and `chat.stream` on `instruction_role: system` in [models_xiomi.yaml](../configs/models_xiomi.yaml). The multi-run reference passed `chat.stream` 5/5 after this override.
+- The Xiaomi reference is not a strict OpenAI error-shape reference: invalid `messages` payloads consistently returned an error object with an empty `error.type`, which the compatibility layer accepts but strict mode records as `chat.error_shape` spec violations.
+- Public references should come from provider-hosted public endpoints, not private gateway runs.
 - Private runs are better used for regression/debugging, not as canonical examples.
 - Official OpenAI baselines are still useful as strict payload-shape references, especially for GPT-5-family parameter compatibility.
