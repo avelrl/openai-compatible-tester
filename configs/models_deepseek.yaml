@@ -1,0 +1,20 @@
+profiles:
+  - name: "deepseek-v4-pro"
+    chat_model: "deepseek-v4-pro"
+    responses_model: "deepseek-v4-pro"
+    extra: {}
+    tests:
+        chat.basic:
+          instruction_role: system
+        chat.stream:
+          instruction_role: system
+
+  - name: "deepseek-v4-flash"
+    chat_model: "deepseek-v4-flash"
+    responses_model: "deepseek-v4-flash"
+    extra: {}
+    tests:
+        chat.basic:
+          instruction_role: system
+        chat.stream:
+          instruction_role: system

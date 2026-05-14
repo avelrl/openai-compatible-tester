@@ -75,6 +75,9 @@ func TestValidateCustomToolFreeformInput(t *testing.T) {
 	if err := validateCustomToolFreeformInput(`print("hello world")`); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if err := validateCustomToolFreeformInput(`print("Hello, World!")`); err != nil {
+		t.Fatalf("unexpected error for punctuated phrase: %v", err)
+	}
 	if err := validateCustomToolFreeformInput(`{"input":"print(\"hello world\")"}`); err == nil {
 		t.Fatalf("expected JSON-wrapped input to fail")
 	}

@@ -20,8 +20,8 @@ profiles:
         max_tokens: 128
 
   - name: "llama-shim-qwen-3.6-35B"
-    chat_model: "Qwen3.6-35B-A3B"
-    responses_model: "Qwen3.6-35B-A3B"
+    chat_model: "svgun/qwen-3.6"
+    responses_model: "svgun/qwen-3.6"
     extra: {}
     tests:
       chat.tool_call:
@@ -30,18 +30,23 @@ profiles:
         max_tokens: 192
 
   - name: "llama-shim-kimi-k2.6"
-    chat_model: "Kimi-K2.6"
-    responses_model: "Kimi-K2.6"
+    chat_model: "svgun/kimi-k2.6"
+    responses_model: "svgun/kimi-k2.6"
     extra: {}
 
   - name: "llama-shim-deepseek-4-pro"
-    chat_model: "deepseek-v4-pro"
-    responses_model: "deepseek-v4-pro"
+    chat_model: "deepseek/deepseek-v4-pro"
+    responses_model: "deepseek/deepseek-v4-pro"
+    extra: {}
+
+  - name: "llama-shim-deepseek-4-flash"
+    chat_model: "deepseek/deepseek-v4-flash"
+    responses_model: "deepseek/deepseek-v4-flash"
     extra: {}
 
   - name: "llama-shim-mimo-v2.5-pro"
-    chat_model: "mimo-v2.5-pro"
-    responses_model: "mimo-v2.5-pro"
+    chat_model: "xiaomi/mimo-v2.5-pro"
+    responses_model: "xiaomi/mimo-v2.5-pro"
     chat_max_tokens_param: "max_completion_tokens"
     temperature: 0
     rate_limit_per_minute: 40
@@ -50,8 +55,8 @@ profiles:
         type: "disabled"
 
   - name: "llama-shim-mimo-v2.5"
-    chat_model: "mimo-v2.5"
-    responses_model: "mimo-v2.5"
+    chat_model: "xiaomi/mimo-v2.5"
+    responses_model: "xiaomi/mimo-v2.5"
     chat_max_tokens_param: "max_completion_tokens"
     temperature: 0
     rate_limit_per_minute: 40
@@ -63,3 +68,15 @@ profiles:
         instruction_role: system
       chat.stream:
         instruction_role: system
+
+  - name: "llama-shim-coder30b"
+    chat_model: "gpu/qwen3-coder-30b"
+    responses_model: "gpu/qwen3-coder-30b"
+    reasoning_effort: "minimal"
+    temperature: 0
+    extra: {}
+    tests:
+        chat.basic:
+          merge_instruction_into_user: true
+          instruction_text: "Follow this instruction exactly. Reply with exactly OK and no other text."
+          user_text: "Return OK."

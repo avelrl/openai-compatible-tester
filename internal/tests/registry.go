@@ -2239,7 +2239,13 @@ func validateCustomToolFreeformInput(input string) error {
 		return fmt.Errorf("custom tool input must be plain text, got %q", trimmed)
 	}
 	lower := strings.ToLower(trimmed)
-	if !strings.Contains(lower, "print") || !strings.Contains(lower, "hello world") {
+	normalized := strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' {
+			return r
+		}
+		return ' '
+	}, lower)
+	if !strings.Contains(lower, "print") || !strings.Contains(strings.Join(strings.Fields(normalized), " "), "hello world") {
 		return fmt.Errorf("unexpected custom tool input: %q", trimmed)
 	}
 	return nil
