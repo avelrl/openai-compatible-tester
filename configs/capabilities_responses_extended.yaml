@@ -1,0 +1,14 @@
+capabilities:
+  # This manifest is for an opt-in Responses parity block. Keep it paired with
+  # configs/suite_responses_extended.yaml, or override individual statuses for
+  # the target/model you are validating.
+
+  responses.assistant_phase:
+    status: supported
+    reason: "Use only for models that accept assistant history phase labels."
+  responses.compaction:
+    status: supported
+    reason: "Target exposes POST /v1/responses/compact."
+  responses.websocket:
+    status: supported
+    reason: "Target exposes Responses WebSocket mode at /v1/responses."

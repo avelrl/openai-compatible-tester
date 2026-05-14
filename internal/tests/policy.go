@@ -89,10 +89,28 @@ func deriveSpecOutcome(res Result) (Status, string, string) {
 		}
 		return StatusFail, "spec_violation", "missing canonical OpenAI error object"
 	case "chat.stream", "responses.stream":
+		if ev != nil && len(ev.StreamShapeErrors) > 0 {
+			return StatusFail, "spec_violation", "malformed canonical stream event: " + ev.StreamShapeErrors[0]
+		}
 		if ev != nil && ev.CanonicalStreamTextSeen && ev.CanonicalStreamTerminalSeen {
 			return StatusPass, "", ""
 		}
 		return StatusFail, "spec_violation", "missing canonical stream text or terminal events"
+	case "responses.compact":
+		if ev != nil && ev.ResponsesCompactionSeen && ev.ResponsesOutputSeen {
+			return StatusPass, "", ""
+		}
+		return StatusFail, "spec_violation", "missing canonical response.compaction output"
+	case "responses.compact.missing_model":
+		if hasCanonicalErrorObject(ev) && (res.HTTPStatus == 400 || res.HTTPStatus == 422) {
+			return StatusPass, "", ""
+		}
+		return StatusFail, "spec_violation", "missing canonical 400/422 error for required compact model"
+	case "responses.websocket.previous_response_not_found", "responses.websocket.reconnect_store_false_recovery", "responses.websocket.failed_continuation_evicts_cache":
+		if compatStatus == StatusPass && ev != nil && len(ev.StreamShapeErrors) == 0 && hasCanonicalWebSocketErrorObject(ev) {
+			return StatusPass, "", ""
+		}
+		return StatusFail, "spec_violation", "missing canonical WebSocket error envelope"
 	case "chat.tool_call", "chat.tool_call.required":
 		if ev != nil && ev.CanonicalToolCallSeen {
 			return StatusPass, "", ""
@@ -113,6 +131,16 @@ func deriveSpecOutcome(res Result) (Status, string, string) {
 			return StatusPass, "", ""
 		}
 		return StatusFail, "spec_violation", "missing canonical structured output"
+	}
+
+	if strings.HasPrefix(res.TestID, "responses.websocket.") {
+		if ev != nil && len(ev.StreamShapeErrors) > 0 {
+			return StatusFail, "spec_violation", "malformed WebSocket stream event: " + ev.StreamShapeErrors[0]
+		}
+		if ev != nil && ev.CanonicalStreamTextSeen && ev.CanonicalStreamTerminalSeen {
+			return StatusPass, "", ""
+		}
+		return StatusFail, "spec_violation", "missing canonical WebSocket stream text or terminal events"
 	}
 
 	if strings.HasPrefix(res.TestID, "responses.") {
@@ -144,6 +172,10 @@ func hasCanonicalBasicText(res Result) bool {
 
 func hasCanonicalErrorObject(ev *Evidence) bool {
 	return ev != nil && ev.ErrorObjectSeen && ev.ErrorMessageSeen && ev.ErrorTypeSeen
+}
+
+func hasCanonicalWebSocketErrorObject(ev *Evidence) bool {
+	return ev != nil && ev.ErrorObjectSeen && ev.ErrorMessageSeen && ev.ErrorCodeSeen
 }
 
 func isExactnessOnlyFailureResult(res Result) bool {

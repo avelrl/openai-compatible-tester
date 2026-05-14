@@ -42,6 +42,7 @@ This is a third-party tool and is not affiliated with OpenAI.
 - tool calling and the second turn after tool execution
 - custom tools with free-form inputs, plus optional grammar-constrained custom tool checks
 - memory/follow-up flows
+- optional Responses phase, compaction, and WebSocket parity checks
 - optional retrieval/conversation-style endpoints
 - compatibility against curated client requirements from `configs/clients.yaml`
 
@@ -114,6 +115,19 @@ go run . \
   --out-dir reports \
   --json
 ```
+
+Optional Responses parity block:
+
+```bash
+go run . \
+  --suite configs/suite_responses_extended.yaml \
+  --capabilities configs/capabilities_responses_extended.yaml \
+  --tests responses.assistant_phase,responses.compact,responses.compact.missing_model,responses.websocket.basic,responses.websocket.sequential,responses.websocket.continuation,responses.websocket.previous_response_not_found,responses.websocket.reconnect_store_false_recovery,responses.websocket.failed_continuation_evicts_cache,responses.websocket.compact_new_chain \
+  --no-tui \
+  --json
+```
+
+This block is capability-gated because assistant `phase`, standalone compaction, and Responses WebSocket mode are optional or environment/model-dependent for many OpenAI-compatible targets.
 
 ## Run
 

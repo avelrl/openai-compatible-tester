@@ -5,6 +5,7 @@ go 1.25
 require (
 	github.com/gdamore/tcell/v2 v2.7.4
 	gopkg.in/yaml.v3 v3.0.1
+	nhooyr.io/websocket v1.8.17
 )
 
 require (

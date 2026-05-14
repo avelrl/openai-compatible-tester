@@ -29,6 +29,8 @@ type Evidence struct {
 	StrictUnsupported            bool     `json:"strict_unsupported,omitempty"`
 	StrictUnsupportedReason      string   `json:"strict_unsupported_reason,omitempty"`
 	StreamEventTypes             []string `json:"stream_event_types,omitempty"`
+	StreamShapeErrors            []string `json:"stream_shape_errors,omitempty"`
+	ResponsesCompactionSeen      bool     `json:"responses_compaction_seen,omitempty"`
 }
 
 func ensureEvidence(result *Result) *Evidence {
@@ -52,6 +54,29 @@ func appendStreamEventType(result *Result, eventType string) {
 		}
 	}
 	ev.StreamEventTypes = append(ev.StreamEventTypes, eventType)
+}
+
+func appendStreamShapeErrors(result *Result, errs []string) {
+	if result == nil || len(errs) == 0 {
+		return
+	}
+	ev := ensureEvidence(result)
+	for _, err := range errs {
+		err = strings.TrimSpace(err)
+		if err == "" {
+			continue
+		}
+		seen := false
+		for _, existing := range ev.StreamShapeErrors {
+			if existing == err {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			ev.StreamShapeErrors = append(ev.StreamShapeErrors, err)
+		}
+	}
 }
 
 func recordChatBodyEvidence(result *Result, body []byte) {
@@ -88,6 +113,9 @@ func recordResponsesBodyEvidence(result *Result, body []byte) {
 	recordToolChoiceEvidence(result, doc)
 	if out, ok := doc["output"].([]interface{}); ok && len(out) > 0 {
 		ev.ResponsesOutputSeen = true
+	}
+	if obj, _ := doc["object"].(string); obj == "response.compaction" {
+		ev.ResponsesCompactionSeen = true
 	}
 	if choices, ok := doc["choices"].([]interface{}); ok && len(choices) > 0 {
 		ev.ChatChoicesSeen = true

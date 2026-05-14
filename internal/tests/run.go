@@ -26,13 +26,13 @@ type Event struct {
 }
 
 type Runner struct {
-	cfg       config.Config
-	client    *httpclient.Client
-	tests     []TestCase
+	cfg          config.Config
+	client       *httpclient.Client
+	tests        []TestCase
 	capabilities config.CapabilitiesConfig
-	pauseMu   sync.Mutex
-	pauseCond *sync.Cond
-	paused    bool
+	pauseMu      sync.Mutex
+	pauseCond    *sync.Cond
+	paused       bool
 }
 
 func NewRunner(cfg config.Config, client *httpclient.Client, tests []TestCase) *Runner {

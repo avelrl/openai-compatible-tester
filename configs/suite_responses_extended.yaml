@@ -1,0 +1,105 @@
+mode: compat
+target: responses_extended
+passes: 1
+warmup_passes: 0
+parallelism: 1
+timeout_seconds: 60
+litellm_headers: {}
+retry:
+  max_attempts: 3
+  backoff_ms: 250
+  rate_limit_max_attempts: 3
+  rate_limit_fallback_ms: 5000
+  retry_on_status: [429, 500, 502, 503, 504]
+  test_retries: 0
+report:
+  snippet_limit_bytes: 4096
+stream:
+  enabled: true
+tool_calling:
+  enabled: true
+structured_outputs:
+  enabled: true
+conversations:
+  enabled: true
+memory:
+  enabled: true
+chat_reasoning:
+  enabled: false
+tests:
+  sanity.models:
+    enabled: false
+  responses.basic:
+    enabled: false
+  responses.store_get:
+    enabled: false
+  responses.stream:
+    enabled: false
+  responses.structured.json_schema:
+    enabled: false
+  responses.structured.json_object:
+    enabled: false
+  responses.tool_call:
+    enabled: false
+  responses.tool_call.required:
+    enabled: false
+  responses.custom_tool:
+    enabled: false
+  responses.custom_tool.grammar:
+    enabled: false
+  responses.error_shape:
+    enabled: false
+  responses.memory.prev_id:
+    enabled: false
+  responses.conversations:
+    enabled: false
+  chat.basic:
+    enabled: false
+  chat.stream:
+    enabled: false
+  chat.tool_call:
+    enabled: false
+  chat.tool_call.required:
+    enabled: false
+  chat.error_shape:
+    enabled: false
+  chat.memory:
+    enabled: false
+  chat.structured.json_schema:
+    enabled: false
+  chat.structured.json_object:
+    enabled: false
+  responses.assistant_phase:
+    timeout_seconds: 60
+  responses.compact:
+    timeout_seconds: 60
+  responses.compact.missing_model:
+    timeout_seconds: 30
+  responses.websocket.basic:
+    timeout_seconds: 60
+  responses.websocket.sequential:
+    timeout_seconds: 90
+  responses.websocket.continuation:
+    timeout_seconds: 90
+  responses.websocket.previous_response_not_found:
+    timeout_seconds: 45
+  responses.websocket.reconnect_store_false_recovery:
+    timeout_seconds: 90
+  responses.websocket.failed_continuation_evicts_cache:
+    timeout_seconds: 90
+  responses.websocket.compact_new_chain:
+    timeout_seconds: 90
+analysis:
+  enabled: true
+  compute_percentiles: true
+  percentiles: [50, 90, 95, 99]
+  flakiness: false
+  fail_on_flaky: false
+codex_review:
+  enabled: false
+  codex_bin: "codex"
+  model: "gpt-5.4"
+  reasoning_effort: "high"
+  sandbox: "read-only"
+  approvals: "never"
+  prompt_template: ""
