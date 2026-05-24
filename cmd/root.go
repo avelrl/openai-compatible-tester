@@ -154,19 +154,9 @@ func Execute() int {
 	analysis := report.Analyze(results, cfg)
 	summary := report.Summary{Results: results, Config: cfg, Profiles: profiles, StartedAt: start, EndedAt: end}
 
-	if err := report.WriteCSV(cfg.OutDir, results); err != nil {
-		fmt.Fprintln(os.Stderr, "report error:", err)
-	}
-	if err := report.WriteSummaryMarkdown(cfg.OutDir, summary, analysis); err != nil {
-		fmt.Fprintln(os.Stderr, "report error:", err)
-	}
-	if err := report.WriteFullLogJSONL(cfg.OutDir, results); err != nil {
-		fmt.Fprintln(os.Stderr, "report error:", err)
-	}
-	if cfg.JSON {
-		if err := report.WriteSummaryJSON(cfg.OutDir, summary, analysis); err != nil {
-			fmt.Fprintln(os.Stderr, "report error:", err)
-		}
+	reportErr := writeReports(cfg, summary, analysis, results)
+	if reportErr != nil {
+		fmt.Fprintln(os.Stderr, "report error:", reportErr)
 	}
 
 	// Optional Codex review step
@@ -175,9 +165,15 @@ func Execute() int {
 		if codexResult.Status != tests.StatusPass {
 			fmt.Fprintf(os.Stderr, "codex review: %s\n", codexResult.ErrorMessage)
 		}
+		if codexResult.ErrorType == "report_error" {
+			reportErr = errors.Join(reportErr, fmt.Errorf("codex review report: %s", codexResult.ErrorMessage))
+		}
 	}
 
 	if cfg.Suite.Analysis.Enabled && cfg.Suite.Analysis.FailOnFlaky && len(flakyStatsForMode(analysis, cfg.Suite.Mode)) > 0 {
+		return 1
+	}
+	if reportErr != nil {
 		return 1
 	}
 	if hasFailures(results) {
@@ -369,6 +365,25 @@ func testIDsForDisplay(list []tests.TestCase) []string {
 	return out
 }
 
+func writeReports(cfg config.Config, summary report.Summary, analysis report.Analysis, results []tests.Result) error {
+	var errs []error
+	if err := report.WriteCSV(cfg.OutDir, results); err != nil {
+		errs = append(errs, fmt.Errorf("write raw.csv: %w", err))
+	}
+	if err := report.WriteSummaryMarkdown(cfg.OutDir, summary, analysis); err != nil {
+		errs = append(errs, fmt.Errorf("write summary.md: %w", err))
+	}
+	if err := report.WriteFullLogJSONL(cfg.OutDir, results); err != nil {
+		errs = append(errs, fmt.Errorf("write full_log.jsonl: %w", err))
+	}
+	if cfg.JSON {
+		if err := report.WriteSummaryJSON(cfg.OutDir, summary, analysis); err != nil {
+			errs = append(errs, fmt.Errorf("write summary.json: %w", err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func maybeRunCodexReview(cfg config.Config, outDir string) *tests.Result {
 	if !cfg.Suite.CodexReview.Enabled {
 		return nil
@@ -403,8 +418,18 @@ func maybeRunCodexReview(cfg config.Config, outDir string) *tests.Result {
 	} else {
 		result.Status = tests.StatusPass
 	}
-	_ = os.MkdirAll(outDir, 0o755)
-	_ = os.WriteFile(filepath.Join(outDir, "codex_review.md"), out, 0o644)
+	if err := os.MkdirAll(outDir, 0o755); err != nil {
+		result.Status = tests.StatusFail
+		result.ErrorType = "report_error"
+		result.ErrorMessage = fmt.Sprintf("create report directory: %v", err)
+		return &result
+	}
+	if err := os.WriteFile(filepath.Join(outDir, "codex_review.md"), out, 0o644); err != nil {
+		result.Status = tests.StatusFail
+		result.ErrorType = "report_error"
+		result.ErrorMessage = fmt.Sprintf("write codex_review.md: %v", err)
+		return &result
+	}
 	return &result
 }
 

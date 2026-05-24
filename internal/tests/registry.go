@@ -31,7 +31,7 @@ const (
 	ErrorTypeDependencyUnavailable = "dependency_unavailable"
 )
 
-var snippetLimit = 4096
+const defaultSnippetLimit = 4096
 
 type TraceStep struct {
 	Name     string `json:"name"`
@@ -111,11 +111,22 @@ func (t TestCase) AppliesToTarget(target string) bool {
 }
 
 type RunContext struct {
-	Client   *httpclient.Client
-	Config   config.Config
-	Profile  config.ModelProfile
-	Pass     int
-	IsWarmup bool
+	Client       *httpclient.Client
+	Config       config.Config
+	Profile      config.ModelProfile
+	Pass         int
+	IsWarmup     bool
+	SnippetLimit int
+}
+
+func (rc RunContext) snippetLimit() int {
+	if rc.SnippetLimit < 0 {
+		return 0
+	}
+	if rc.SnippetLimit == 0 {
+		return defaultSnippetLimit
+	}
+	return rc.SnippetLimit
 }
 
 const (
@@ -713,7 +724,7 @@ func runModelsList(ctx context.Context, rc RunContext) Result {
 	result.LatencyMS = resp.Latency.Milliseconds()
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
-	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	result.ResponseSnippet = clip(string(resp.Body), result.snippetLimit)
 	if resp.StatusCode == 404 || resp.StatusCode == 405 {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
 	}
@@ -734,7 +745,7 @@ func runResponsesBasic(ctx context.Context, rc RunContext) Result {
 	payload := baseResponsesPayload(rc.Profile)
 	applyResponsesReasoningOverride(payload, effectiveResponsesReasoningEffort(rc.Profile, ov))
 	payload["input"] = responsesInputWithOptionalInstruction(rc.Config, rc.Profile, "responses.basic", "", "Reply with exactly OK", "ping", "ping: answer with OK")
-	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
+	result.RequestSnippet = clip(prettyJSON(payload), result.snippetLimit)
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, payload, headers)
 	if err != nil {
 		return failResult(result, err, "http_error")
@@ -751,7 +762,7 @@ func runResponsesStoreGet(ctx context.Context, rc RunContext) Result {
 	payload["input"] = responsesInputWithOptionalInstruction(rc.Config, rc.Profile, "responses.store_get", "", "Say OK and nothing else", "", "Say OK and nothing else")
 	payload["store"] = true
 	step1Req := prettyJSON(payload)
-	result.RequestSnippet = clip(step1Req, snippetLimit)
+	result.RequestSnippet = clip(step1Req, result.snippetLimit)
 	withTraceStep(&result, "create_response", step1Req, "")
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, payload, headers)
 	if err != nil {
@@ -762,7 +773,7 @@ func runResponsesStoreGet(ctx context.Context, rc RunContext) Result {
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
 	step1RespText := string(resp.Body)
-	result.ResponseSnippet = clip(step1RespText, snippetLimit)
+	result.ResponseSnippet = clip(step1RespText, result.snippetLimit)
 	updateTraceStepResponse(&result, "create_response", step1RespText)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
@@ -786,8 +797,8 @@ func runResponsesStoreGet(ctx context.Context, rc RunContext) Result {
 	}
 	step2RespText := string(getResp.Body)
 	withTraceStep(&result, "get_response", "GET "+rc.Config.Endpoints.Paths.Responses+"/"+id, step2RespText)
-	result.RequestSnippet = clip("STEP1:\n"+step1Req+"\n\nSTEP2:\nGET "+rc.Config.Endpoints.Paths.Responses+"/"+id, snippetLimit)
-	result.ResponseSnippet = clip("STEP1:\n"+step1RespText+"\n\nSTEP2:\n"+step2RespText, snippetLimit)
+	result.RequestSnippet = clip("STEP1:\n"+step1Req+"\n\nSTEP2:\nGET "+rc.Config.Endpoints.Paths.Responses+"/"+id, result.snippetLimit)
+	result.ResponseSnippet = clip("STEP1:\n"+step1RespText+"\n\nSTEP2:\n"+step2RespText, result.snippetLimit)
 	if isGetUnsupported(getResp.Body) || isUnexpectedEndpointOrMethod(getResp.Body) {
 		result.HTTPStatus = getResp.StatusCode
 		result.LatencyMS = getResp.Latency.Milliseconds()
@@ -859,7 +870,7 @@ func runResponsesStructuredSchema(ctx context.Context, rc RunContext) Result {
 			"strict": true,
 		},
 	}
-	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
+	result.RequestSnippet = clip(prettyJSON(payload), result.snippetLimit)
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, payload, headers)
 	if err != nil {
 		return failResult(result, err, "http_error")
@@ -889,7 +900,7 @@ func runResponsesStructuredObject(ctx context.Context, rc RunContext) Result {
 	payload["text"] = map[string]interface{}{
 		"format": map[string]interface{}{"type": "json_object"},
 	}
-	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
+	result.RequestSnippet = clip(prettyJSON(payload), result.snippetLimit)
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, payload, headers)
 	if err != nil {
 		return failResult(result, err, "http_error")
@@ -951,7 +962,7 @@ func runResponsesCustomToolVariant(ctx context.Context, rc RunContext, testID, n
 	payload["input"] = prompt
 
 	req := prettyJSON(payload)
-	result.RequestSnippet = clip(req, snippetLimit)
+	result.RequestSnippet = clip(req, result.snippetLimit)
 	withTraceStep(&result, "request_custom_tool", req, "")
 
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, payload, headers)
@@ -962,7 +973,7 @@ func runResponsesCustomToolVariant(ctx context.Context, rc RunContext, testID, n
 	result.LatencyMS = resp.Latency.Milliseconds()
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
-	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	result.ResponseSnippet = clip(string(resp.Body), result.snippetLimit)
 	updateTraceStepResponse(&result, "request_custom_tool", string(resp.Body))
 	recordResponsesBodyEvidence(&result, resp.Body)
 
@@ -1066,7 +1077,7 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 		payload["stream"] = true
 	}
 	step1Req := prettyJSON(payload)
-	result.RequestSnippet = clip(step1Req, snippetLimit)
+	result.RequestSnippet = clip(step1Req, result.snippetLimit)
 	withTraceStep(&result, "request_tool_call", step1Req, "")
 
 	var (
@@ -1118,7 +1129,7 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 			return nil
 		})
 		if err != nil {
-			result.ResponseSnippet = clip(raw.String(), snippetLimit)
+			result.ResponseSnippet = clip(raw.String(), result.snippetLimit)
 			return failResult(result, err, "http_error")
 		}
 		result.HTTPStatus = resp.StatusCode
@@ -1127,7 +1138,7 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 		result.BytesOut = resp.BytesOut
 		step1Body = resp.Body
 		step1RespText = raw.String()
-		result.ResponseSnippet = clip(step1RespText, snippetLimit)
+		result.ResponseSnippet = clip(step1RespText, result.snippetLimit)
 		updateTraceStepResponse(&result, "request_tool_call", step1RespText)
 		recordResponsesBodyEvidence(&result, resp.Body)
 
@@ -1163,7 +1174,7 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 		result.BytesOut = resp.BytesOut
 		step1Body = resp.Body
 		step1RespText = string(resp.Body)
-		result.ResponseSnippet = clip(step1RespText, snippetLimit)
+		result.ResponseSnippet = clip(step1RespText, result.snippetLimit)
 		updateTraceStepResponse(&result, "request_tool_call", step1RespText)
 		recordResponsesBodyEvidence(&result, resp.Body)
 
@@ -1214,15 +1225,15 @@ func runResponsesToolCallVariant(ctx context.Context, rc RunContext, testID, nam
 
 	resp2, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, second, headers)
 	if err != nil {
-		result.RequestSnippet = clip("STEP1:\n"+step1Req+"\n\nSTEP2:\n"+step2Req, snippetLimit)
-		result.ResponseSnippet = clip("STEP1:\n"+step1RespText, snippetLimit)
+		result.RequestSnippet = clip("STEP1:\n"+step1Req+"\n\nSTEP2:\n"+step2Req, result.snippetLimit)
+		result.ResponseSnippet = clip("STEP1:\n"+step1RespText, result.snippetLimit)
 		return failResult(result, err, "http_error")
 	}
 
 	step2RespText := string(resp2.Body)
-	result.RequestSnippet = clip("STEP1:\n"+step1Req+"\n\nSTEP2:\n"+step2Req, snippetLimit)
+	result.RequestSnippet = clip("STEP1:\n"+step1Req+"\n\nSTEP2:\n"+step2Req, result.snippetLimit)
 	tmp := handleResponsesTextResultAllowRepeatedScalar(result, resp2, "42")
-	tmp.ResponseSnippet = clip("STEP1:\n"+step1RespText+"\n\nSTEP2:\n"+step2RespText, snippetLimit)
+	tmp.ResponseSnippet = clip("STEP1:\n"+step1RespText+"\n\nSTEP2:\n"+step2RespText, result.snippetLimit)
 	updateTraceStepResponse(&tmp, "submit_tool_output", step2RespText)
 	return tmp
 }
@@ -1234,7 +1245,7 @@ func runResponsesErrorShape(ctx context.Context, rc RunContext) Result {
 		"model": rc.Profile.ResponsesModel,
 		"input": 1, // invalid input type
 	}
-	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
+	result.RequestSnippet = clip(prettyJSON(payload), result.snippetLimit)
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, payload, headers)
 	if err != nil {
 		return failResult(result, err, "http_error")
@@ -1243,7 +1254,7 @@ func runResponsesErrorShape(ctx context.Context, rc RunContext) Result {
 	result.LatencyMS = resp.Latency.Milliseconds()
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
-	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	result.ResponseSnippet = clip(string(resp.Body), result.snippetLimit)
 	recordResponsesBodyEvidence(&result, resp.Body)
 	if isUnexpectedEndpointOrMethod(resp.Body) {
 		return unsupportedResult(result, "endpoint_missing", errorMessage(resp.Body))
@@ -1272,7 +1283,7 @@ func runResponsesMemory(ctx context.Context, rc RunContext) Result {
 	payload := baseResponsesPayload(rc.Profile)
 	applyResponsesReasoningOverride(payload, effectiveResponsesReasoningEffort(rc.Profile, ov))
 	payload["input"] = responsesInputWithOptionalInstruction(rc.Config, rc.Profile, "responses.memory.prev_id", "", "Remember: my code = 123. Reply OK", "", "Remember: my code = 123. Reply OK")
-	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
+	result.RequestSnippet = clip(prettyJSON(payload), result.snippetLimit)
 	withTraceStep(&result, "remember_value", prettyJSON(payload), "")
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, payload, headers)
 	if err != nil {
@@ -1282,7 +1293,7 @@ func runResponsesMemory(ctx context.Context, rc RunContext) Result {
 	result.LatencyMS = resp.Latency.Milliseconds()
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
-	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	result.ResponseSnippet = clip(string(resp.Body), result.snippetLimit)
 	updateTraceStepResponse(&result, "remember_value", string(resp.Body))
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
@@ -1298,7 +1309,7 @@ func runResponsesMemory(ctx context.Context, rc RunContext) Result {
 	applyResponsesReasoningOverride(payload2, effectiveResponsesReasoningEffort(rc.Profile, ov))
 	payload2["previous_response_id"] = id
 	payload2["input"] = "What was my code? Reply with just the number."
-	result.RequestSnippet = clip(prettyJSON(payload2), snippetLimit)
+	result.RequestSnippet = clip(prettyJSON(payload2), result.snippetLimit)
 	withTraceStep(&result, "follow_up_with_previous_response_id", prettyJSON(payload2), "")
 	resp2, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, payload2, headers)
 	if err != nil {
@@ -1310,7 +1321,7 @@ func runResponsesMemory(ctx context.Context, rc RunContext) Result {
 		result.LatencyMS = resp2.Latency.Milliseconds()
 		result.BytesIn = resp2.BytesIn
 		result.BytesOut = resp2.BytesOut
-		result.ResponseSnippet = clip(string(resp2.Body), snippetLimit)
+		result.ResponseSnippet = clip(string(resp2.Body), result.snippetLimit)
 		return unsupportedResult(result, "stateless_responses", "previous_response_id was ignored by provider")
 	}
 	return handleResponsesTextResult(result, resp2, "123")
@@ -1326,7 +1337,7 @@ func runResponsesConversations(ctx context.Context, rc RunContext) Result {
 			{"type": "message", "role": "user", "content": "Remember: code=777. Reply OK."},
 		},
 	}
-	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
+	result.RequestSnippet = clip(prettyJSON(payload), result.snippetLimit)
 	withTraceStep(&result, "create_conversation", prettyJSON(payload), "")
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Conversations, payload, headers)
 	if err != nil {
@@ -1336,7 +1347,7 @@ func runResponsesConversations(ctx context.Context, rc RunContext) Result {
 	result.LatencyMS = resp.Latency.Milliseconds()
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
-	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	result.ResponseSnippet = clip(string(resp.Body), result.snippetLimit)
 	updateTraceStepResponse(&result, "create_conversation", string(resp.Body))
 	if isHTMLDocument(resp.Body) {
 		return unsupportedResult(result, "endpoint_missing", "html page returned instead of API response")
@@ -1358,7 +1369,7 @@ func runResponsesConversations(ctx context.Context, rc RunContext) Result {
 	applyResponsesReasoningOverride(payload2, effectiveResponsesReasoningEffort(rc.Profile, ov))
 	payload2["conversation"] = convID
 	payload2["input"] = []map[string]string{{"role": "user", "content": "What is the code? Reply with just the number."}}
-	result.RequestSnippet = clip(prettyJSON(payload2), snippetLimit)
+	result.RequestSnippet = clip(prettyJSON(payload2), result.snippetLimit)
 	withTraceStep(&result, "use_conversation", prettyJSON(payload2), "")
 	resp2, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Responses, payload2, headers)
 	if err != nil {
@@ -1378,7 +1389,7 @@ func runChatBasic(ctx context.Context, rc RunContext) Result {
 	instruction := overridePromptText(ov.InstructionText, "Reply with exactly OK")
 	userPrompt := overridePromptText(ov.UserText, "ping")
 	payload["messages"] = chatMessagesWithInstruction(rc.Config, rc.Profile, "chat.basic", "developer", instruction, userPrompt)
-	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
+	result.RequestSnippet = clip(prettyJSON(payload), result.snippetLimit)
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Chat, payload, headers)
 	if err != nil {
 		return failResult(result, err, "http_error")
@@ -1404,7 +1415,7 @@ func runChatStream(ctx context.Context, rc RunContext) Result {
 	userPrompt := overridePromptText(ov.UserText, "go")
 	payload["messages"] = chatMessagesWithInstruction(rc.Config, rc.Profile, "chat.stream", "developer", instruction, userPrompt)
 	requestTrace := prettyJSON(payload)
-	result.RequestSnippet = clip(requestTrace, snippetLimit)
+	result.RequestSnippet = clip(requestTrace, result.snippetLimit)
 	var text strings.Builder
 	var raw strings.Builder
 	done := false
@@ -1534,7 +1545,7 @@ func runChatToolCallVariant(ctx context.Context, rc RunContext, testID, name, fo
 	payload["tools"] = []map[string]interface{}{chatAddTool(toolName, strict)}
 	payload["messages"] = []map[string]string{{"role": "user", "content": step1Prompt}}
 	step1Req := prettyJSON(payload)
-	result.RequestSnippet = clip(step1Req, snippetLimit)
+	result.RequestSnippet = clip(step1Req, result.snippetLimit)
 	withTraceStep(&result, "request_tool_call", step1Req, "")
 
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Chat, payload, headers)
@@ -1546,7 +1557,7 @@ func runChatToolCallVariant(ctx context.Context, rc RunContext, testID, name, fo
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
 	step1RespText := string(resp.Body)
-	result.ResponseSnippet = clip(step1RespText, snippetLimit)
+	result.ResponseSnippet = clip(step1RespText, result.snippetLimit)
 	updateTraceStepResponse(&result, "request_tool_call", step1RespText)
 	recordChatBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
@@ -1585,15 +1596,15 @@ func runChatToolCallVariant(ctx context.Context, rc RunContext, testID, name, fo
 
 	resp2, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Chat, payload2, headers)
 	if err != nil {
-		result.RequestSnippet = clip("STEP1:\n"+step1Req+"\n\nSTEP2:\n"+step2Req, snippetLimit)
-		result.ResponseSnippet = clip("STEP1:\n"+step1RespText, snippetLimit)
+		result.RequestSnippet = clip("STEP1:\n"+step1Req+"\n\nSTEP2:\n"+step2Req, result.snippetLimit)
+		result.ResponseSnippet = clip("STEP1:\n"+step1RespText, result.snippetLimit)
 		return failResult(result, err, "http_error")
 	}
 
 	step2RespText := string(resp2.Body)
-	result.RequestSnippet = clip("STEP1:\n"+step1Req+"\n\nSTEP2:\n"+step2Req, snippetLimit)
+	result.RequestSnippet = clip("STEP1:\n"+step1Req+"\n\nSTEP2:\n"+step2Req, result.snippetLimit)
 	tmp := handleChatTextResultAllowRepeatedScalar(result, resp2, "42")
-	tmp.ResponseSnippet = clip("STEP1:\n"+step1RespText+"\n\nSTEP2:\n"+step2RespText, snippetLimit)
+	tmp.ResponseSnippet = clip("STEP1:\n"+step1RespText+"\n\nSTEP2:\n"+step2RespText, result.snippetLimit)
 	updateTraceStepResponse(&tmp, "submit_tool_result", step2RespText)
 	return tmp
 }
@@ -1606,7 +1617,7 @@ func runChatErrorShape(ctx context.Context, rc RunContext) Result {
 	payload := baseChatPayload(rc.Profile, rc.Config.Suite)
 	applyChatReasoningOverride(payload, effectiveChatReasoningEffort(rc.Profile, rc.Config.Suite, ov))
 	payload["messages"] = 1 // invalid messages type
-	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
+	result.RequestSnippet = clip(prettyJSON(payload), result.snippetLimit)
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Chat, payload, headers)
 	if err != nil {
 		return failResult(result, err, "http_error")
@@ -1615,7 +1626,7 @@ func runChatErrorShape(ctx context.Context, rc RunContext) Result {
 	result.LatencyMS = resp.Latency.Milliseconds()
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
-	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	result.ResponseSnippet = clip(string(resp.Body), result.snippetLimit)
 	recordChatBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
@@ -1645,7 +1656,7 @@ func runChatMemory(ctx context.Context, rc RunContext) Result {
 		{"role": "assistant", "content": "OK"},
 		{"role": "user", "content": "What is the code? Reply with just the number."},
 	}
-	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
+	result.RequestSnippet = clip(prettyJSON(payload), result.snippetLimit)
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Chat, payload, headers)
 	if err != nil {
 		return failResult(result, err, "http_error")
@@ -1682,7 +1693,7 @@ func runChatStructuredSchema(ctx context.Context, rc RunContext) Result {
 			"strict": true,
 		},
 	}
-	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
+	result.RequestSnippet = clip(prettyJSON(payload), result.snippetLimit)
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Chat, payload, headers)
 	if err != nil {
 		return failResult(result, err, "http_error")
@@ -1706,7 +1717,7 @@ func runChatStructuredObject(ctx context.Context, rc RunContext) Result {
 	payload["response_format"] = map[string]interface{}{
 		"type": "json_object",
 	}
-	result.RequestSnippet = clip(prettyJSON(payload), snippetLimit)
+	result.RequestSnippet = clip(prettyJSON(payload), result.snippetLimit)
 	resp, err := rc.Client.PostJSON(ctx, rc.Config.Endpoints.Paths.Chat, payload, headers)
 	if err != nil {
 		return failResult(result, err, "http_error")
@@ -1723,7 +1734,7 @@ func baseResult(id, name string, rc RunContext) Result {
 		Model:        rc.Profile.ResponsesModel,
 		Status:       StatusFail,
 		IsWarmup:     rc.IsWarmup,
-		snippetLimit: snippetLimit,
+		snippetLimit: rc.snippetLimit(),
 	}
 }
 
@@ -1740,7 +1751,7 @@ func handleResponsesTextResultMatch(result Result, resp *httpclient.Response, ex
 	result.LatencyMS = resp.Latency.Milliseconds()
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
-	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	result.ResponseSnippet = clip(string(resp.Body), result.snippetLimit)
 	recordResponsesBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
@@ -1777,7 +1788,7 @@ func handleChatTextResultMatch(result Result, resp *httpclient.Response, expecte
 	result.LatencyMS = resp.Latency.Milliseconds()
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
-	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	result.ResponseSnippet = clip(string(resp.Body), result.snippetLimit)
 	recordChatBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
@@ -1802,7 +1813,7 @@ func handleStructuredResponse(result Result, resp *httpclient.Response, strictSc
 	result.LatencyMS = resp.Latency.Milliseconds()
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
-	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	result.ResponseSnippet = clip(string(resp.Body), result.snippetLimit)
 	recordResponsesBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
@@ -1836,7 +1847,7 @@ func handleStructuredChat(result Result, resp *httpclient.Response, strictSchema
 	result.LatencyMS = resp.Latency.Milliseconds()
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
-	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	result.ResponseSnippet = clip(string(resp.Body), result.snippetLimit)
 	recordChatBodyEvidence(&result, resp.Body)
 	if isEndpointMissing(resp.StatusCode) {
 		return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", resp.StatusCode))
@@ -2001,13 +2012,6 @@ func containsExact(list []string, want string) bool {
 		}
 	}
 	return false
-}
-
-func setSnippetLimit(limit int) {
-	if limit < 0 {
-		limit = 0
-	}
-	snippetLimit = limit
 }
 
 func withTraceStep(result *Result, name, request, response string) {
@@ -2982,7 +2986,7 @@ func runResponsesStream(ctx context.Context, rc RunContext) Result {
 	payload["stream"] = true
 	payload["input"] = responsesInstructionInput(rc.Config, rc.Profile, "responses.stream", "system", "Reply with exactly HELLO and nothing else.", "go")
 	requestTrace := prettyJSON(payload)
-	result.RequestSnippet = clip(requestTrace, snippetLimit)
+	result.RequestSnippet = clip(requestTrace, result.snippetLimit)
 	var text strings.Builder
 	var raw strings.Builder
 	done := false

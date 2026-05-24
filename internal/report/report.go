@@ -14,7 +14,7 @@ import (
 	"github.com/avelrl/openai-compatible-tester/internal/tests"
 )
 
-const ToolVersion = "0.1.0"
+var ToolVersion = "0.1.0"
 
 type Summary struct {
 	Results   []tests.Result

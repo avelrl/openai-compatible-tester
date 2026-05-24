@@ -75,9 +75,8 @@ func (r *Runner) waitIfPaused(ctx context.Context) error {
 func (r *Runner) Run(ctx context.Context, profiles []config.ModelProfile, onEvent func(Event)) ([]Result, error) {
 	limit := r.cfg.Suite.Report.SnippetLimitBytes
 	if limit <= 0 {
-		limit = 4096
+		limit = defaultSnippetLimit
 	}
-	setSnippetLimit(limit)
 	tests := r.filterTests()
 	if len(tests) == 0 {
 		return nil, fmt.Errorf("no tests selected")
@@ -147,7 +146,7 @@ func (r *Runner) Run(ctx context.Context, profiles []config.ModelProfile, onEven
 			isWarmup := pass <= warmups
 			for _, profile := range profiles {
 				select {
-				case jobs <- job{Profile: profile, Pass: pass, IsWarmup: isWarmup}:
+				case jobs <- job{Profile: profile, Pass: pass, IsWarmup: isWarmup, SnippetLimit: limit}:
 				case <-ctx.Done():
 					return
 				}
@@ -340,9 +339,20 @@ func sleepWithContext(ctx context.Context, d time.Duration) bool {
 }
 
 type job struct {
-	Profile  config.ModelProfile
-	Pass     int
-	IsWarmup bool
+	Profile      config.ModelProfile
+	Pass         int
+	IsWarmup     bool
+	SnippetLimit int
+}
+
+func (j job) snippetLimit() int {
+	if j.SnippetLimit < 0 {
+		return 0
+	}
+	if j.SnippetLimit == 0 {
+		return defaultSnippetLimit
+	}
+	return j.SnippetLimit
 }
 
 func (r *Runner) safeRunTest(ctx context.Context, test TestCase, job job) Result {
@@ -363,11 +373,12 @@ func (r *Runner) safeRunTest(ctx context.Context, test TestCase, job job) Result
 		}
 	}()
 	res = test.Run(ctx, RunContext{
-		Client:   r.client,
-		Config:   r.cfg,
-		Profile:  job.Profile,
-		Pass:     job.Pass,
-		IsWarmup: job.IsWarmup,
+		Client:       r.client,
+		Config:       r.cfg,
+		Profile:      job.Profile,
+		Pass:         job.Pass,
+		IsWarmup:     job.IsWarmup,
+		SnippetLimit: job.snippetLimit(),
 	})
 	if res.TestID == "" {
 		res.TestID = test.ID
@@ -388,13 +399,14 @@ func (r *Runner) safeRunTest(ctx context.Context, test TestCase, job job) Result
 
 func baseRunResult(test TestCase, job job, status Status) Result {
 	return Result{
-		TestID:   test.ID,
-		TestName: test.Name,
-		Profile:  job.Profile.Name,
-		Pass:     job.Pass,
-		Model:    modelFor(test, job.Profile),
-		Status:   status,
-		IsWarmup: job.IsWarmup,
+		TestID:       test.ID,
+		TestName:     test.Name,
+		Profile:      job.Profile.Name,
+		Pass:         job.Pass,
+		Model:        modelFor(test, job.Profile),
+		Status:       status,
+		IsWarmup:     job.IsWarmup,
+		snippetLimit: job.snippetLimit(),
 	}
 }
 

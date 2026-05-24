@@ -132,7 +132,7 @@ func runLlamaShimResponsesRetrieveInputItems(ctx context.Context, rc RunContext)
 	}
 
 	getPath := rc.Config.Endpoints.Paths.Responses + "/" + id + "/input_items"
-	result.RequestSnippet = clip("GET "+getPath, snippetLimit)
+	result.RequestSnippet = clip("GET "+getPath, result.snippetLimit)
 	withTraceStep(&result, "get_input_items", "GET "+getPath, "")
 	getResp, err := rc.Client.Get(ctx, getPath, headers)
 	if err != nil {
@@ -204,7 +204,7 @@ func runLlamaShimConversationsCreateRetrieve(ctx context.Context, rc RunContext)
 	}
 
 	getPath := rc.Config.Endpoints.Paths.Conversations + "/" + convID
-	result.RequestSnippet = clip("GET "+getPath, snippetLimit)
+	result.RequestSnippet = clip("GET "+getPath, result.snippetLimit)
 	withTraceStep(&result, "get_conversation", "GET "+getPath, "")
 	getResp, err := rc.Client.Get(ctx, getPath, headers)
 	if err != nil {
@@ -272,7 +272,7 @@ func runLlamaShimConversationsItemsList(ctx context.Context, rc RunContext) Resu
 	}
 
 	listPath := rc.Config.Endpoints.Paths.Conversations + "/" + url.PathEscape(convID) + "/items?order=asc&limit=20"
-	result.RequestSnippet = clip("GET "+listPath, snippetLimit)
+	result.RequestSnippet = clip("GET "+listPath, result.snippetLimit)
 	withTraceStep(&result, "list_conversation_items", "GET "+listPath, "")
 	listResp, err := rc.Client.Get(ctx, listPath, headers)
 	if err != nil {
@@ -389,7 +389,7 @@ func runLlamaShimConversationsItemsAppend(ctx context.Context, rc RunContext) Re
 	}
 
 	getItemPath := rc.Config.Endpoints.Paths.Conversations + "/" + url.PathEscape(convID) + "/items/" + url.PathEscape(firstItemID)
-	result.RequestSnippet = clip("GET "+getItemPath, snippetLimit)
+	result.RequestSnippet = clip("GET "+getItemPath, result.snippetLimit)
 	withTraceStep(&result, "get_appended_item", "GET "+getItemPath, "")
 	getResp, err := rc.Client.Get(ctx, getItemPath, headers)
 	if err != nil {
@@ -586,7 +586,7 @@ func recordHTTPResponse(result *Result, resp *httpclient.Response) {
 	result.LatencyMS = resp.Latency.Milliseconds()
 	result.BytesIn = resp.BytesIn
 	result.BytesOut = resp.BytesOut
-	result.ResponseSnippet = clip(string(resp.Body), snippetLimit)
+	result.ResponseSnippet = clip(string(resp.Body), result.snippetLimit)
 	recordResponsesBodyEvidence(result, resp.Body)
 }
 

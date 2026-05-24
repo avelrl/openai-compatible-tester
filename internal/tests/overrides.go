@@ -50,6 +50,9 @@ func mergeTestOverride(base, overlay config.TestOverride) config.TestOverride {
 	if v := strings.TrimSpace(overlay.UserText); v != "" {
 		merged.UserText = v
 	}
+	if overlay.MergeInstructionIntoUser != nil {
+		merged.MergeInstructionIntoUser = overlay.MergeInstructionIntoUser
+	}
 	if v := strings.TrimSpace(overlay.ToolChoiceMode); v != "" {
 		merged.ToolChoiceMode = v
 	}

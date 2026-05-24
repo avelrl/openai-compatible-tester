@@ -524,6 +524,7 @@ func TestApplyStreamTimeoutHeader(t *testing.T) {
 }
 
 func TestTestOverrideForProfileMergesSuiteDefaults(t *testing.T) {
+	yes := true
 	v96 := 96
 	cfg := config.Config{
 		Suite: config.SuiteConfig{
@@ -543,10 +544,11 @@ func TestTestOverrideForProfileMergesSuiteDefaults(t *testing.T) {
 		Name: "kimi-tuned",
 		Tests: map[string]config.TestOverride{
 			"chat.tool_call.required": {
-				TimeoutSeconds:  45,
-				ReasoningEffort: "omit",
-				InstructionRole: "system",
-				InstructionText: "Use only add.",
+				TimeoutSeconds:           45,
+				ReasoningEffort:          "omit",
+				InstructionRole:          "system",
+				InstructionText:          "Use only add.",
+				MergeInstructionIntoUser: &yes,
 			},
 		},
 	}
@@ -575,6 +577,9 @@ func TestTestOverrideForProfileMergesSuiteDefaults(t *testing.T) {
 	}
 	if got.UserText != "Call sum." {
 		t.Fatalf("user_text=%q, want inherited text", got.UserText)
+	}
+	if got.MergeInstructionIntoUser == nil || !*got.MergeInstructionIntoUser {
+		t.Fatalf("merge_instruction_into_user=%v, want true", got.MergeInstructionIntoUser)
 	}
 	if got.LiteLLMHeaders["x-litellm-timeout"] != "60" {
 		t.Fatalf("expected inherited header, got %q", got.LiteLLMHeaders["x-litellm-timeout"])
@@ -1094,9 +1099,6 @@ func TestEffectiveFullTraceStepsPrefersUnclippedFullTrace(t *testing.T) {
 }
 
 func TestRunChatStreamAppliesReasoningOverride(t *testing.T) {
-	setSnippetLimit(64)
-	t.Cleanup(func() { setSnippetLimit(4096) })
-
 	var gotBody map[string]interface{}
 	cfg := config.Config{
 		BaseURL: "https://example.test",
@@ -1150,9 +1152,10 @@ func TestRunChatStreamAppliesReasoningOverride(t *testing.T) {
 	)
 
 	res := runChatStream(context.Background(), RunContext{
-		Client:  client,
-		Config:  cfg,
-		Profile: profile,
+		Client:       client,
+		Config:       cfg,
+		Profile:      profile,
+		SnippetLimit: 64,
 	})
 	if res.Status != StatusPass {
 		t.Fatalf("status=%s error=%s", res.Status, res.ErrorMessage)

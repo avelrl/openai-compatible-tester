@@ -629,7 +629,7 @@ func handleWebSocketSessionError(result Result, err error) Result {
 	var wsHTTP *webSocketHTTPError
 	if errors.As(err, &wsHTTP) {
 		result.HTTPStatus = wsHTTP.StatusCode
-		result.ResponseSnippet = clip(string(wsHTTP.Body), snippetLimit)
+		result.ResponseSnippet = clip(string(wsHTTP.Body), result.snippetLimit)
 		recordErrorEvidence(&result, wsHTTP.Body)
 		if isEndpointMissing(wsHTTP.StatusCode) {
 			return unsupportedResult(result, "endpoint_missing", fmt.Sprintf("status %d", wsHTTP.StatusCode))
@@ -692,5 +692,5 @@ func recordWebSocketSession(result *Result, session webSocketSessionResult) {
 			appendStreamShapeErrors(result, turn.Errors)
 		}
 	}
-	result.ResponseSnippet = clip(trace.String(), snippetLimit)
+	result.ResponseSnippet = clip(trace.String(), result.snippetLimit)
 }

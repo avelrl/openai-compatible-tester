@@ -7,3 +7,4 @@
 models_private.yaml
 endpoints_private.yaml
 .DS_Store
+.tmp
